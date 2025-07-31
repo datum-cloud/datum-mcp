@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# IDE / editor metadata
+.idea/
+.vscode/
+
+# Python byte-code & caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/        # pytest runner cache
+.mypy_cache/          # mypy type-checker cache
+
+# Packaging / metadata
+*.egg-info/
+*.dist-info/
+pip-wheel-metadata/
+
+# Virtual-envs (if you keep one next to the repo)
+.venv/
+
+# Misc build / coverage artifacts
+*.log
+dist/
+build/
+coverage.*
+htmlcov/              # coverage html output

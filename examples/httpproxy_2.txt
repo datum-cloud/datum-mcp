@@ -1,0 +1,15 @@
+Create an HTTPProxy named simple‑proxy that forwards every request to https://example.com.
+---
+apiVersion: networking.datumapis.com/v1alpha
+kind: HTTPProxy
+metadata:
+  name: simple-proxy
+spec:
+  rules:
+    - name: default
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backends:
+        - endpoint: https://example.com
