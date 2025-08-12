@@ -5,33 +5,30 @@ Datum MCP backend – deterministic helpers for:
   • emitting a minimal YAML skeleton,
   • listing allowed field paths (prefers spec.*),
   • pruning unknown/disallowed fields,
-  • validating with apiserver dry-run (Strict field validation),
-  • returning few-shot examples.
+  • validating with apiserver dry-run (Strict field validation).
 
 Env:
   DATUM_PROJECT       – project id (enables control-plane /openapi/v3 route)
   DATUM_OPENAPI_BASE  – override full openapi base path if needed
   DATUM_KUBE_CONTEXT  – kubeconfig context name (optional)
 """
-
 from __future__ import annotations
 
 import os
 import re
-import yaml
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import yaml
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from kubernetes.client.exceptions import ApiException
+from pydantic import BaseModel
 
 from discovery import DiscoveryCache
 
 # ───── constants / config ──────────────────────────────────────────────
 
 ROOT_DIR = Path(__file__).parent.resolve()
-EX_DIR = ROOT_DIR / "examples"
 
 # Allow-lists for metadata; customize if you want to preserve specific keys
 ALLOWED_META_ANNOTATIONS: set[str] = set()
@@ -52,26 +49,9 @@ _FULL_SCHEMA = _DISC.full_schema  # full object schema per (api, kind)
 _IDX = re.compile(r"\[\d+]")  # strip list indices like [7] from dotted paths
 
 
-# ───── examples loader ─────────────────────────────────────────────────
-
-def _load_examples() -> List[dict]:
-    out: List[dict] = []
-    if not EX_DIR.exists():
-        return out
-    for p in sorted(EX_DIR.glob("*.txt")):
-        try:
-            user_txt, yaml_block = map(str.strip, p.read_text().split("---", 1))
-        except ValueError:
-            continue
-        out.append({"user": user_txt, "assistant": yaml_block})
-    return out
-
-
-_EXAMPLES = _load_examples()
-
 # ───── utils ───────────────────────────────────────────────────────────
 
-def _prune(doc: str) -> Tuple[str, List[str], List[str]]:
+def _prune(doc: str) -> tuple[str, List[str], List[str]]:
     """
     • Remove any spec.* field not in the schema allow-list (when spec exists).
     • Strip metadata.annotations/labels except allow-listed keys.
@@ -113,7 +93,6 @@ def _prune(doc: str) -> Tuple[str, List[str], List[str]]:
     # ----- prune metadata annotations/labels ---------------------------
     meta = data.get("metadata", {})
     if isinstance(meta, dict):
-        # annotations
         ann = meta.get("annotations", {})
         if isinstance(ann, dict):
             for k in list(ann.keys()):
@@ -122,7 +101,7 @@ def _prune(doc: str) -> Tuple[str, List[str], List[str]]:
                     ann.pop(k)
             if not ann:
                 meta.pop("annotations", None)
-        # labels
+
         lab = meta.get("labels", {})
         if isinstance(lab, dict):
             for k in list(lab.keys()):
@@ -131,12 +110,12 @@ def _prune(doc: str) -> Tuple[str, List[str], List[str]]:
                     lab.pop(k)
             if not lab:
                 meta.pop("labels", None)
+
         if not meta:
             data.pop("metadata", None)
 
     # ----- drop stray top-level keys using discovered props ------------
     allowed_top = _TOP_ALLOWED.get((api, kind), set())
-    # Always allow the canonical trio even if not in props
     always = {"apiVersion", "kind", "metadata"}
     for top in list(data.keys()):
         if top not in (allowed_top | always):
@@ -162,8 +141,7 @@ def _make_skeleton(api: str, kind: str) -> str:
             return out
         if t == "array":
             return [build(node.get("items") or {})]
-        # primitive; return a neutral placeholder (None maps to null)
-        return None
+        return None  # primitive → neutral placeholder (null)
 
     body: Dict[str, object] = {"apiVersion": api, "kind": kind}
 
@@ -228,10 +206,6 @@ class ListSupReq(BaseModel):
     kind: str
 
 
-class ExamplesResp(BaseModel):
-    examples: List[dict]
-
-
 @app.get("/datum/list_crds", response_model=ListCRDsResp)
 def list_crds():
     return {"crds": sorted(_FULL_SCHEMA.keys())}
@@ -261,7 +235,7 @@ def list_supported(req: ListSupReq):
 def prune(req: PruneReq):
     cleaned, bad_spec, bad_meta_or_top = _prune(req.yaml)
     removed = bad_spec + bad_meta_or_top
-    if removed:  # strict mode
+    if removed:  # strict mode: surface removals as a 422
         raise HTTPException(
             422,
             "Unsupported fields stripped:\n- " + "\n- ".join(removed),
@@ -285,6 +259,7 @@ def validate(req: ValReq):
     # Namespace handling for namespaced types
     meta = obj.setdefault("metadata", {}) if isinstance(obj, dict) else {}
     ns = meta.get("namespace")
+
     try:
         if getattr(res, "namespaced", False):
             if not ns:
@@ -311,11 +286,6 @@ def validate(req: ValReq):
         return {"valid": False, "details": str(e)}
 
 
-@app.get("/datum/list_examples", response_model=ExamplesResp)
-def list_examples():
-    return {"examples": _EXAMPLES}
-
-
 @app.post("/datum/refresh_discovery")
 def refresh_discovery():
     try:
@@ -331,7 +301,6 @@ def refresh_discovery():
 
 def run_http(port: int = 7777):
     import uvicorn
-
     uvicorn.run(
         "server:app",
         host="127.0.0.1",
@@ -339,3 +308,12 @@ def run_http(port: int = 7777):
         log_level="warning",
         access_log=False,
     )
+
+
+# Expose functions for cli.py (direct call path)
+list_crds = list_crds
+skeleton = skeleton
+list_supported = list_supported
+prune = prune
+validate = validate
+refresh_discovery = refresh_discovery

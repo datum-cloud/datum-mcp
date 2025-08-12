@@ -2,14 +2,23 @@
 """
 Datum MCP JSON-RPC bridge exposing deterministic tools.
 
-Tools:
+Public tools (advertised to the LLM):
   • datum_list_crds
-  • datum_skeleton_crd
   • datum_list_supported
   • datum_prune_crd
   • datum_validate_crd
-  • datum_list_examples
   • datum_refresh_discovery
+
+Internal (hidden) tool:
+  • datum_skeleton_crd   # callable by orchestrator, not listed to the LLM
+
+Run with:
+  python cli.py                 # STDIO JSON-RPC for Claude Desktop
+  python cli.py --port 7777     # plus FastAPI HTTP server for manual testing
+
+Env:
+  DATUM_HIDE_SKELETON = 1 (default)  → hide skeleton from tools/list
+                         0/false     → show skeleton in tools/list
 """
 from __future__ import annotations
 
@@ -17,6 +26,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from typing import Any, Callable
 
@@ -26,7 +36,6 @@ try:
 except ImportError:
     class _Stub:
         def list_crds(self):     return {"crds": [("g/v", "Kind")]}
-        def list_examples(self): return {"examples": []}
         class SkeletonReq:
             def __init__(self, apiVersion: str, kind: str):
                 self.apiVersion, self.kind = apiVersion, kind
@@ -42,50 +51,82 @@ except ImportError:
         def prune(self, _):           return {"yaml": "# stub", "removed": []}
         def validate(self, _):        return {"valid": True, "details": ""}
         def refresh_discovery(self):  return {"ok": True, "count": 0}
+        def run_http(self, port: int): print(f"(stub) HTTP on :{port}")
     server = _Stub()  # type: ignore
+
+# ——— config ————————————————————————————————————————————————
+HIDE_SKELETON = os.getenv("DATUM_HIDE_SKELETON", "1").lower() not in ("0", "false")
 
 # ——— tool catalogue — advertised to the LLM ————————————————
 TOOLS = [
-    {"name": "datum_list_crds",
-     "description": "List all apiVersion/kind pairs known to the control plane.",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "datum_skeleton_crd",
-     "description": "Return minimal YAML skeleton for apiVersion+kind.",
-     "inputSchema": {"type": "object", "properties": {
-         "apiVersion": {"type": "string"},
-         "kind": {"type": "string"}
-     }, "required": ["apiVersion", "kind"]}},
-    {"name": "datum_list_supported",
-     "description": "List legal field paths (prefers spec.* when present; otherwise top-level fields).",
-     "inputSchema": {"type": "object", "properties": {
-         "apiVersion": {"type": "string"},
-         "kind": {"type": "string"}
-     }, "required": ["apiVersion", "kind"]}},
-    {"name": "datum_prune_crd",
-     "description": "Strip unsupported fields (422 if any were removed).",
-     "inputSchema": {"type": "object", "properties": {
-         "yaml": {"type": "string"}
-     }, "required": ["yaml"]}},
-    {"name": "datum_validate_crd",
-     "description": "Validate with Kubernetes server dry-run (Strict field validation).",
-     "inputSchema": {"type": "object", "properties": {
-         "yaml": {"type": "string"}
-     }, "required": ["yaml"]}},
-    {"name": "datum_list_examples",
-     "description": "Return few-shot examples.",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
-    {"name": "datum_refresh_discovery",
-     "description": "Refresh the OpenAPI discovery cache.",
-     "inputSchema": {"type": "object", "properties": {}, "required": []}},
+    {
+        "name": "datum_list_crds",
+        "description": "List all apiVersion/kind pairs known to the control plane.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    # Skeleton is intentionally hidden from the LLM unless explicitly enabled
+    *(
+        []
+        if HIDE_SKELETON
+        else [
+            {
+                "name": "datum_skeleton_crd",
+                "description": "Return minimal YAML skeleton for apiVersion+kind.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "apiVersion": {"type": "string"},
+                        "kind": {"type": "string"},
+                    },
+                    "required": ["apiVersion", "kind"],
+                },
+            }
+        ]
+    ),
+    {
+        "name": "datum_list_supported",
+        "description": "List legal field paths (prefers spec.* when present; otherwise top-level fields).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "apiVersion": {"type": "string"},
+                "kind": {"type": "string"},
+            },
+            "required": ["apiVersion", "kind"],
+        },
+    },
+    {
+        "name": "datum_prune_crd",
+        "description": "Strip unsupported fields (422 if any were removed).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"yaml": {"type": "string"}},
+            "required": ["yaml"],
+        },
+    },
+    {
+        "name": "datum_validate_crd",
+        "description": "Validate with Kubernetes server dry-run (Strict field validation).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"yaml": {"type": "string"}},
+            "required": ["yaml"],
+        },
+    },
+    {
+        "name": "datum_refresh_discovery",
+        "description": "Refresh the OpenAPI discovery cache.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
+# All callable handlers (includes hidden skeleton for orchestrator use)
 HANDLERS: dict[str, tuple[Callable, Any | None]] = {
     "datum_list_crds":         (server.list_crds,          None),
     "datum_skeleton_crd":      (server.skeleton,           server.SkeletonReq),
     "datum_list_supported":    (server.list_supported,     server.ListSupReq),
     "datum_prune_crd":         (server.prune,              server.PruneReq),
     "datum_validate_crd":      (server.validate,           server.ValReq),
-    "datum_list_examples":     (server.list_examples,      None),
     "datum_refresh_discovery": (server.refresh_discovery,  None),
 }
 
@@ -95,8 +136,7 @@ IGNORED = {
 }
 
 # ——— logging & CLI args ————————————————————————————————
-logging.basicConfig(level=logging.INFO,
-                    format="[datum-mcp] %(message)s", stream=sys.stderr)
+logging.basicConfig(level=logging.INFO, format="[datum-mcp] %(message)s", stream=sys.stderr)
 log = logging.getLogger("datum-mcp")
 
 ap = argparse.ArgumentParser()
@@ -111,7 +151,6 @@ async def _read() -> str | None:
     return await loop.run_in_executor(None, sys.stdin.readline) or None
 
 async def _send(obj: dict):
-    # ensure_ascii=False keeps unicode nice in terminals
     sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
@@ -121,34 +160,28 @@ def _jsonify(o: Any) -> Any:
     - pydantic BaseModel -> dict
     - bytes/bytearray    -> utf-8 string (replace errors)
     - dict/list/tuple    -> recurse
-    - everything else    -> as-is (let json.dumps handle primitives)
+    - exceptions         -> str
     """
     # pydantic models → dict
     try:
-        from pydantic import BaseModel  # type: ignore
-        if isinstance(o, BaseModel):
+        from pydantic import BaseModel as _PB  # type: ignore
+        if isinstance(o, _PB):
             return o.model_dump()
     except Exception:
         pass
 
-    # bytes → text
     if isinstance(o, (bytes, bytearray)):
         try:
             return o.decode("utf-8", "replace")
         except Exception:
-            # ensure we never bubble bytes upward
             return str(o)
 
-    # containers → recurse
     if isinstance(o, dict):
         return {k: _jsonify(v) for k, v in o.items()}
     if isinstance(o, (list, tuple)):
         return [_jsonify(x) for x in o]
-
-    # exceptions → string (extra safety)
     if isinstance(o, BaseException):
         return str(o)
-
     return o
 
 # ——— main loop ————————————————————————————————————————
@@ -170,10 +203,15 @@ async def main():
         try:
             # handshake --------------------------------------------------
             if meth == "initialize":
-                await _send({"jsonrpc": "2.0", "id": mid,
-                             "result": {"protocolVersion": "2025-06-18",
-                                        "serverInfo": {"name": "datum-mcp", "version": "2.1.0"},
-                                        "capabilities": {}}})
+                await _send({
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "result": {
+                        "protocolVersion": "2025-06-18",
+                        "serverInfo": {"name": "datum-mcp", "version": "2.2.0"},
+                        "capabilities": {},
+                    },
+                })
                 await _send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
                 continue
 
@@ -190,22 +228,26 @@ async def main():
 
             # tool execution --------------------------------------------
             if meth == "tools/call":
-                name = p["name"]; argv = p.get("arguments", {}) or {}
+                name = p["name"]
+                argv = p.get("arguments", {}) or {}
+                if name not in HANDLERS:
+                    raise KeyError(f"Unknown tool {name}")
                 fn, Ty = HANDLERS[name]
                 if asyncio.iscoroutinefunction(fn):
                     res = (await fn(Ty(**argv)) if Ty else await fn())
                 else:
                     res = (fn(Ty(**argv)) if Ty else fn())
-
                 payload = _jsonify(res)
-                # as extra defense, if something still slips through, stringify on failure
+                # stringify as a last resort
                 try:
                     text = json.dumps(payload, indent=2, ensure_ascii=False)
                 except TypeError:
                     text = json.dumps(str(payload), ensure_ascii=False)
-
-                await _send({"jsonrpc": "2.0", "id": mid,
-                             "result": {"content": [{"type": "text", "text": text}]}})
+                await _send({
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "result": {"content": [{"type": "text", "text": text}]},
+                })
                 continue
 
             # unknown ---------------------------------------------------
