@@ -1,11 +1,11 @@
 # server.py
 """
 Datum MCP backend – deterministic helpers for:
-  • discovering available types via OpenAPI v3 (control plane),
+  • discovering available types via OpenAPI v3 (control plane) or GitHub CRDs,
   • emitting a minimal YAML skeleton,
   • listing allowed field paths (prefers spec.*),
   • pruning unknown/disallowed fields,
-  • validating with apiserver dry-run (Strict field validation).
+  • validating (local schema-only; no cluster dry-run).
 
 Env:
   DATUM_PROJECT       – project id (enables control-plane /openapi/v3 route)
@@ -21,7 +21,7 @@ from typing import Dict, List, Tuple
 
 import yaml
 from fastapi import FastAPI, HTTPException
-from kubernetes.client.exceptions import ApiException
+from kubernetes.client.exceptions import ApiException  # harmless import even if unused
 from pydantic import BaseModel
 
 from discovery import DiscoveryCache
@@ -245,45 +245,38 @@ def prune(req: PruneReq):
 
 @app.post("/datum/validate_crd")
 def validate(req: ValReq):
+    """
+    Local-only validation:
+      • YAML parse errors → invalid
+      • Unknown apiVersion/kind → invalid
+      • Any fields that would be pruned → invalid (report which)
+      • Otherwise → valid (note: no cluster dry-run performed)
+    """
+    # Parse YAML
     try:
-        obj = yaml.safe_load(req.yaml) or {}
+        _ = yaml.safe_load(req.yaml) or {}
     except Exception as e:
         return {"valid": False, "details": f"Invalid YAML: {e}"}
 
-    api, kind = obj.get("apiVersion"), obj.get("kind")
+    # Use _prune in detect-only mode; convert HTTPException to a normal response
     try:
-        res = _DISC.dyn.resources.get(api_version=api, kind=kind)
-    except Exception as e:
-        return {"valid": False, "details": f"Discovery failed: {e}"}
+        _, bad_spec, bad_meta_or_top = _prune(req.yaml)
+    except HTTPException as he:
+        # e.g., unknown api/kind or invalid YAML caught inside _prune
+        detail = getattr(he, "detail", str(he))
+        return {"valid": False, "details": str(detail)}
 
-    # Namespace handling for namespaced types
-    meta = obj.setdefault("metadata", {}) if isinstance(obj, dict) else {}
-    ns = meta.get("namespace")
+    removed = bad_spec + bad_meta_or_top
+    if removed:
+        return {
+            "valid": False,
+            "details": "Unsupported fields (local schema): " + ", ".join(removed),
+        }
 
-    try:
-        if getattr(res, "namespaced", False):
-            if not ns:
-                ns = "default"
-                meta["namespace"] = ns
-            res.create(
-                body=obj,
-                namespace=ns,
-                dry_run="All",
-                field_manager="datum-mcp",
-                field_validation="Strict",
-            )
-        else:
-            res.create(
-                body=obj,
-                dry_run="All",
-                field_manager="datum-mcp",
-                field_validation="Strict",
-            )
-        return {"valid": True, "details": ""}
-    except ApiException as e:
-        return {"valid": False, "details": e.body or str(e)}
-    except Exception as e:
-        return {"valid": False, "details": str(e)}
+    return {
+        "valid": True,
+        "details": "Local schema check passed (no cluster dry-run).",
+    }
 
 
 @app.post("/datum/refresh_discovery")
@@ -308,12 +301,3 @@ def run_http(port: int = 7777):
         log_level="warning",
         access_log=False,
     )
-
-
-# Expose functions for cli.py (direct call path)
-list_crds = list_crds
-skeleton = skeleton
-list_supported = list_supported
-prune = prune
-validate = validate
-refresh_discovery = refresh_discovery
