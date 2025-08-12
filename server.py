@@ -21,7 +21,6 @@ from typing import Dict, List, Tuple
 
 import yaml
 from fastapi import FastAPI, HTTPException
-from kubernetes.client.exceptions import ApiException  # harmless import even if unused
 from pydantic import BaseModel
 
 from discovery import DiscoveryCache

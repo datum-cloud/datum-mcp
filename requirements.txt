@@ -2,4 +2,3 @@ fastapi
 uvicorn[standard]   # ASGI server runtime
 pydantic>=2
 pyyaml>=6           # YAML load/dump for specs & schemas
-kubernetes>=29
