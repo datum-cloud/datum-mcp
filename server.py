@@ -1,232 +1,341 @@
+# server.py
 """
-Datum MCP backend – deterministic helpers for
-  • discovering CRDs,
-  • emitting a minimal skeleton,
-  • listing allowed spec.* paths,
-  • pruning unknown keys or disallowed metadata,
-  • validating YAML with kubeconform, and
-  • serving few-shot examples for the frontend LLM.
+Datum MCP backend – deterministic helpers for:
+  • discovering available types via OpenAPI v3 (control plane),
+  • emitting a minimal YAML skeleton,
+  • listing allowed field paths (prefers spec.*),
+  • pruning unknown/disallowed fields,
+  • validating with apiserver dry-run (Strict field validation),
+  • returning few-shot examples.
+
+Env:
+  DATUM_PROJECT       – project id (enables control-plane /openapi/v3 route)
+  DATUM_OPENAPI_BASE  – override full openapi base path if needed
+  DATUM_KUBE_CONTEXT  – kubeconfig context name (optional)
 """
 
 from __future__ import annotations
-import re, subprocess, tempfile
+
+import os
+import re
+import yaml
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import yaml
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from kubernetes.client.exceptions import ApiException
 
-# ───── configuration ────────────────────────────────────────────────────
-ROOT_DIR   = Path(__file__).parent.resolve()
-SCHEMA_DIR = ROOT_DIR / "schema"
-EX_DIR     = ROOT_DIR / "examples"
+from discovery import DiscoveryCache
 
-# Allow-lists for metadata -------------------------------
+# ───── constants / config ──────────────────────────────────────────────
+
+ROOT_DIR = Path(__file__).parent.resolve()
+EX_DIR = ROOT_DIR / "examples"
+
+# Allow-lists for metadata; customize if you want to preserve specific keys
 ALLOWED_META_ANNOTATIONS: set[str] = set()
-ALLOWED_META_LABELS:      set[str] = set()
+ALLOWED_META_LABELS: set[str] = set()
 
-# ───── build lookup tables once ─────────────────────────────────────────
-def _build_maps() -> Tuple[
-    Dict[Tuple[str, str], set[str]],
-    Dict[str, List[str]],
-    Dict[Tuple[str, str], dict]
-]:
-    allowed, kind2api, raw = {}, {}, {}
-    for crd_file in SCHEMA_DIR.glob("*.yaml"):
-        doc   = yaml.safe_load(crd_file.read_text())
-        group = doc["spec"]["group"]
-        kind  = doc["spec"]["names"]["kind"]
+# ───── discovery (built at import) ─────────────────────────────────────
 
-        for ver in doc["spec"]["versions"]:
-            api  = f"{group}/{ver['name']}"
-            kind2api.setdefault(kind, []).append(api)
+_DISC = DiscoveryCache(
+    project=os.getenv("DATUM_PROJECT"),
+    kube_context=os.getenv("DATUM_KUBE_CONTEXT"),
+)
 
-            spec_schema = ver["schema"]["openAPIV3Schema"]["properties"]["spec"]
-            raw[(api, kind)] = spec_schema
+_ALLOWED = _DISC.allowed          # spec.* paths per (api, kind)
+_TOP_ALLOWED = _DISC.top_allowed  # top-level fields per (api, kind)
+_K2A = _DISC.kind2api             # kind -> [apiVersions]
+_FULL_SCHEMA = _DISC.full_schema  # full object schema per (api, kind)
 
-            paths: set[str] = set()
-            def walk(node, base):
-                for k, val in node.get("properties", {}).items():
-                    here = f"{base}.{k}" if base else k
-                    paths.add(here)
-                    walk(val, here)
-                if "items" in node:
-                    walk(node["items"], base)
-            walk(spec_schema, "spec")
-            allowed[(api, kind)] = paths
-    return allowed, kind2api, raw
+_IDX = re.compile(r"\[\d+]")  # strip list indices like [7] from dotted paths
 
-_ALLOWED, _K2A, _RAW_SCHEMA = _build_maps()
-_IDX = re.compile(r"\[\d+]")             # strip list indices like [7]
 
-# ───── load few-shot examples ───────────────────────────────────────────
+# ───── examples loader ─────────────────────────────────────────────────
+
 def _load_examples() -> List[dict]:
     out: List[dict] = []
+    if not EX_DIR.exists():
+        return out
     for p in sorted(EX_DIR.glob("*.txt")):
         try:
             user_txt, yaml_block = map(str.strip, p.read_text().split("---", 1))
         except ValueError:
-            continue                    # malformed file
+            continue
         out.append({"user": user_txt, "assistant": yaml_block})
     return out
 
+
 _EXAMPLES = _load_examples()
 
-# ───── helpers ──────────────────────────────────────────────────────────
+# ───── utils ───────────────────────────────────────────────────────────
+
 def _prune(doc: str) -> Tuple[str, List[str], List[str]]:
     """
-    • Remove any spec.* field not in the schema allow-list.
-    • Delete *all* metadata.annotations / metadata.labels except allow-listed ones.
-    • Drop unknown top-level keys.
-    Returns: (clean YAML, removed_spec_paths, removed_meta_paths)
+    • Remove any spec.* field not in the schema allow-list (when spec exists).
+    • Strip metadata.annotations/labels except allow-listed keys.
+    • Drop unknown top-level keys (based on discovered top-level props).
+    Returns: (clean YAML, removed_spec_paths, removed_meta_or_top_paths)
     """
-    data = yaml.safe_load(doc)
+    try:
+        data = yaml.safe_load(doc) or {}
+    except Exception as e:
+        raise HTTPException(400, f"Invalid YAML: {e}")
+
     api, kind = data.get("apiVersion"), data.get("kind")
-    if (api, kind) not in _ALLOWED:
-        raise HTTPException(400, f"{api}/{kind} is not an allowed CRD")
+    if (api, kind) not in _FULL_SCHEMA:
+        raise HTTPException(400, f"{api}/{kind} is not known to the control plane")
 
-    # ------- prune spec.* ----------------------------------------------
-    allowed = _ALLOWED[(api, kind)]
     removed_spec: List[str] = []
+    removed_meta_or_top: List[str] = []
 
-    def walk(node, dotted=""):
-        if isinstance(node, dict):
-            for k in list(node):
-                here  = f"{dotted}.{k}" if dotted else k
-                clean = _IDX.sub("", here)
-                if clean.startswith("spec.") and clean not in allowed:
-                    removed_spec.append(clean)
-                    node.pop(k)
-                else:
-                    walk(node[k], here)
-        elif isinstance(node, list):
-            for i, x in enumerate(node):
-                walk(x, f"{dotted}[{i}]")
+    # ----- prune spec.* if schema has spec subtree ---------------------
+    if (api, kind) in _ALLOWED:
+        allowed = _ALLOWED[(api, kind)]
 
-    walk(data)
+        def walk(node, dotted=""):
+            if isinstance(node, dict):
+                for k in list(node.keys()):
+                    here = f"{dotted}.{k}" if dotted else k
+                    clean = _IDX.sub("", here)
+                    if clean.startswith("spec.") and clean not in allowed:
+                        removed_spec.append(clean)
+                        node.pop(k)
+                    else:
+                        walk(node[k], here)
+            elif isinstance(node, list):
+                for i, x in enumerate(node):
+                    walk(x, f"{dotted}[{i}]")
 
-    # ------- prune metadata --------------------------------------------
-    removed_meta: List[str] = []
+        walk(data)
+
+    # ----- prune metadata annotations/labels ---------------------------
     meta = data.get("metadata", {})
     if isinstance(meta, dict):
         # annotations
         ann = meta.get("annotations", {})
         if isinstance(ann, dict):
-            for k in list(ann):
+            for k in list(ann.keys()):
                 if k not in ALLOWED_META_ANNOTATIONS:
-                    removed_meta.append(f"metadata.annotations.{k}")
+                    removed_meta_or_top.append(f"metadata.annotations.{k}")
                     ann.pop(k)
             if not ann:
                 meta.pop("annotations", None)
         # labels
         lab = meta.get("labels", {})
         if isinstance(lab, dict):
-            for k in list(lab):
+            for k in list(lab.keys()):
                 if k not in ALLOWED_META_LABELS:
-                    removed_meta.append(f"metadata.labels.{k}")
+                    removed_meta_or_top.append(f"metadata.labels.{k}")
                     lab.pop(k)
             if not lab:
                 meta.pop("labels", None)
-        if not meta:                    # strip empty metadata map
+        if not meta:
             data.pop("metadata", None)
 
-    # ------- drop stray top-level keys ---------------------------------
-    for top in list(data):
-        if top not in {"apiVersion", "kind", "metadata", "spec"}:
-            removed_meta.append(top)
+    # ----- drop stray top-level keys using discovered props ------------
+    allowed_top = _TOP_ALLOWED.get((api, kind), set())
+    # Always allow the canonical trio even if not in props
+    always = {"apiVersion", "kind", "metadata"}
+    for top in list(data.keys()):
+        if top not in (allowed_top | always):
+            removed_meta_or_top.append(top)
             data.pop(top)
 
     cleaned = yaml.safe_dump(data, sort_keys=False)
-    return cleaned, removed_spec, removed_meta
-
-
-def _validate(yaml_doc: str) -> None:
-    with tempfile.NamedTemporaryFile("w", delete=False) as fh:
-        fh.write(yaml_doc)
-        fh.flush()
-        subprocess.check_output(
-            ["kubeconform", "-strict",
-             f"-schema-location=file://{SCHEMA_DIR}", fh.name],
-            text=True, stderr=subprocess.STDOUT,
-        )
+    return cleaned, removed_spec, removed_meta_or_top
 
 
 def _make_skeleton(api: str, kind: str) -> str:
-    spec_schema = _RAW_SCHEMA[(api, kind)]
+    schema = _FULL_SCHEMA[(api, kind)]
+    props = schema.get("properties", {}) or {}
 
-    def build(node):
-        if node.get("type") == "object":
+    def build(node: dict):
+        t = node.get("type")
+        if t == "object":
             out = {}
-            for k, sub in node.get("properties", {}).items():
-                if k in node.get("required", []):
-                    out[k] = build(sub)
+            req = set(node.get("required", []) or [])
+            for k, sub in (node.get("properties") or {}).items():
+                if k in req:
+                    out[k] = build(sub or {})
             return out
-        if node.get("type") == "array":
-            return [build(node["items"])]
+        if t == "array":
+            return [build(node.get("items") or {})]
+        # primitive; return a neutral placeholder (None maps to null)
         return None
 
-    skel = {
-        "apiVersion": api,
-        "kind": kind,
-        "spec": build(spec_schema) or {},
-    }
-    return yaml.safe_dump(skel, sort_keys=False)
+    body: Dict[str, object] = {"apiVersion": api, "kind": kind}
 
-# ───── FastAPI app ──────────────────────────────────────────────────────
+    # metadata (often requires name; sometimes namespace)
+    meta_schema = props.get("metadata")
+    if isinstance(meta_schema, dict):
+        needed = set(meta_schema.get("required", []) or [])
+        meta = {}
+        if "name" in needed:
+            meta["name"] = ""
+        if "namespace" in needed:
+            meta["namespace"] = ""
+        if meta:
+            body["metadata"] = meta
+
+    # prefer spec subtree when present
+    if "spec" in props:
+        body["spec"] = build(props["spec"]) or {}
+    else:
+        # build minimal required top-level fields besides apiVersion/kind/metadata
+        req = set(schema.get("required", []) or []) - {"apiVersion", "kind", "metadata"}
+        for k in sorted(req):
+            if k in props:
+                body[k] = build(props[k])
+
+    return yaml.safe_dump(body, sort_keys=False)
+
+
+# ───── FastAPI types & app ─────────────────────────────────────────────
+
 app = FastAPI()
 
-# —— pydantic models
-class ListCRDsResp(BaseModel): crds: List[Tuple[str, str]]
-class SkeletonReq(BaseModel): apiVersion: str; kind: str
-class SkeletonResp(BaseModel): yaml: str
-class PruneReq(BaseModel): yaml: str
-class PruneResp(BaseModel): yaml: str; removed: List[str]
-class ValReq(BaseModel): yaml: str
-class ListSupReq(BaseModel): apiVersion: str; kind: str
-class ExamplesResp(BaseModel): examples: List[dict]
 
-# —— endpoints
+class ListCRDsResp(BaseModel):
+    crds: List[Tuple[str, str]]
+
+
+class SkeletonReq(BaseModel):
+    apiVersion: str
+    kind: str
+
+
+class SkeletonResp(BaseModel):
+    yaml: str
+
+
+class PruneReq(BaseModel):
+    yaml: str
+
+
+class PruneResp(BaseModel):
+    yaml: str
+    removed: List[str]
+
+
+class ValReq(BaseModel):
+    yaml: str
+
+
+class ListSupReq(BaseModel):
+    apiVersion: str
+    kind: str
+
+
+class ExamplesResp(BaseModel):
+    examples: List[dict]
+
+
 @app.get("/datum/list_crds", response_model=ListCRDsResp)
 def list_crds():
-    return {"crds": sorted(_ALLOWED.keys())}
+    return {"crds": sorted(_FULL_SCHEMA.keys())}
+
 
 @app.post("/datum/skeleton_crd", response_model=SkeletonResp)
 def skeleton(req: SkeletonReq):
     key = (req.apiVersion, req.kind)
-    if key not in _RAW_SCHEMA:
+    if key not in _FULL_SCHEMA:
         raise HTTPException(400, "Unknown apiVersion/kind")
     return {"yaml": _make_skeleton(*key)}
+
 
 @app.post("/datum/list_supported")
 def list_supported(req: ListSupReq):
     key = (req.apiVersion, req.kind)
-    if key not in _ALLOWED:
+    if key not in _FULL_SCHEMA:
         raise HTTPException(400, "Unknown apiVersion/kind")
-    return {"paths": sorted(_ALLOWED[key])}
+    # prefer spec.* paths; otherwise expose top-level fields excluding boilerplate
+    if key in _ALLOWED:
+        return {"paths": sorted(_ALLOWED[key])}
+    tl = _TOP_ALLOWED.get(key, set()) - {"apiVersion", "kind", "metadata"}
+    return {"paths": sorted(tl)}
+
 
 @app.post("/datum/prune_crd", response_model=PruneResp)
 def prune(req: PruneReq):
-    cleaned, bad_spec, bad_meta = _prune(req.yaml)
-    removed = bad_spec + bad_meta
-    if removed:                         # strict mode
-        raise HTTPException(422,
-            "Unsupported fields stripped:\n- " + "\n- ".join(removed))
+    cleaned, bad_spec, bad_meta_or_top = _prune(req.yaml)
+    removed = bad_spec + bad_meta_or_top
+    if removed:  # strict mode
+        raise HTTPException(
+            422,
+            "Unsupported fields stripped:\n- " + "\n- ".join(removed),
+        )
     return {"yaml": cleaned, "removed": []}
+
 
 @app.post("/datum/validate_crd")
 def validate(req: ValReq):
     try:
-        _validate(req.yaml)
+        obj = yaml.safe_load(req.yaml) or {}
+    except Exception as e:
+        return {"valid": False, "details": f"Invalid YAML: {e}"}
+
+    api, kind = obj.get("apiVersion"), obj.get("kind")
+    try:
+        res = _DISC.dyn.resources.get(api_version=api, kind=kind)
+    except Exception as e:
+        return {"valid": False, "details": f"Discovery failed: {e}"}
+
+    # Namespace handling for namespaced types
+    meta = obj.setdefault("metadata", {}) if isinstance(obj, dict) else {}
+    ns = meta.get("namespace")
+    try:
+        if getattr(res, "namespaced", False):
+            if not ns:
+                ns = "default"
+                meta["namespace"] = ns
+            res.create(
+                body=obj,
+                namespace=ns,
+                dry_run="All",
+                field_manager="datum-mcp",
+                field_validation="Strict",
+            )
+        else:
+            res.create(
+                body=obj,
+                dry_run="All",
+                field_manager="datum-mcp",
+                field_validation="Strict",
+            )
         return {"valid": True, "details": ""}
-    except subprocess.CalledProcessError as e:
-        return {"valid": False, "details": e.output}
+    except ApiException as e:
+        return {"valid": False, "details": e.body or str(e)}
+    except Exception as e:
+        return {"valid": False, "details": str(e)}
+
 
 @app.get("/datum/list_examples", response_model=ExamplesResp)
 def list_examples():
     return {"examples": _EXAMPLES}
 
+
+@app.post("/datum/refresh_discovery")
+def refresh_discovery():
+    try:
+        _DISC.allowed.clear()
+        _DISC.top_allowed.clear()
+        _DISC.kind2api.clear()
+        _DISC.full_schema.clear()
+        _DISC.refresh()
+        return {"ok": True, "count": len(_FULL_SCHEMA)}
+    except Exception as e:
+        raise HTTPException(500, f"refresh failed: {e}")
+
+
 def run_http(port: int = 7777):
     import uvicorn
-    uvicorn.run("server:app", host="127.0.0.1", port=port,
-                log_level="warning", access_log=False)
+
+    uvicorn.run(
+        "server:app",
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        access_log=False,
+    )

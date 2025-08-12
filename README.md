@@ -8,11 +8,11 @@ A lightweight FastAPI server exists, but the primary workflow is inside Claude.
 
 ## Requirements
 
-| Tool | Reason |
-|------|--------|
-| **Python 3.11+** | runtime |
-| **kubeconform** | strict schema validation |
-| **git** | one‑time fetch of Datum CRD YAMLs |
+| Tool             | Reason |
+|------------------|--------|
+| **Python 3.11+** | runtime |
+| **kubeconform**  | strict schema validation |
+| **git**          | one‑time fetch of Datum CRD YAMLs |
 
 Python packages (installed via `requirements.txt`):
 
@@ -84,4 +84,4 @@ Add the `datum_mcp` entry to your `~/.claude/desktop.json`:
 
 ## License
 
-Apache 2.0
+Apache 2.0
