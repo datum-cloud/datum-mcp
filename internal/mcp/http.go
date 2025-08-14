@@ -11,12 +11,20 @@ func ServeHTTP(s *Service, port int) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/datum/list_crds", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.K.Preflight(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 		res, err := s.ListCRDs(context.Background())
 		if err != nil { http.Error(w, err.Error(), 500); return }
 		writeJSON(w, res)
 	})
 
 	mux.HandleFunc("/datum/get_crd", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.K.Preflight(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 		var req GetCRDReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", 400); return
@@ -27,6 +35,10 @@ func ServeHTTP(s *Service, port int) error {
 	})
 
 	mux.HandleFunc("/datum/validate_yaml", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.K.Preflight(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 		var req ValidateReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", 400); return

@@ -51,6 +51,30 @@ MCP traffic uses <strong>STDIO</strong>. An optional local <strong>HTTP</strong>
 
 ---
 
+## Auth & preflight (no auto-login)
+
+This server <strong>never logs you in</strong>. It uses whatever credentials are present in your kubeconfig.
+
+On <strong>every</strong> tool call (HTTP or MCP), a preflight runs:
+
+1. <strong>Context exists</strong> — errors if the named <code>--kube-context</code> is not present.  
+2. <strong>Cluster reachable</strong> — probes the API via <code>kubectl get --raw /version</code> (fallback: <code>kubectl version --short</code>).  
+3. <strong>RBAC</strong> — checks <code>kubectl auth can-i --quiet get crd</code>. Validation also requires auth for the kinds you dry-run.
+
+If any step fails, the endpoint returns <strong>401 Unauthorized</strong> with a helpful message (e.g., “You must be logged in…”, “context not found”, or “insufficient RBAC”).  
+To obtain credentials for Datum clusters, run your usual flow (for example: <code>datumctl auth login</code> and update kubeconfig), then retry — you <strong>don’t</strong> need to restart the server.
+
+<strong>Simulate “logged out” for testing</strong>
+
+```bash
+: > /tmp/empty-kubeconfig
+KUBECONFIG=/tmp/empty-kubeconfig datum-mcp --port 8080 --kube-context <datum-context>
+# -> requests will 401 (context not found / provide credentials)
+```
+Restore by <code>unset KUBECONFIG</code> (or point it back to <code>~/.kube/config</code>).
+
+---
+
 ## Install
 
 ```bash
@@ -178,7 +202,7 @@ go build -o datum-mcp ./cmd/mcp
   You passed a non-existent <code>--kube-context</code>.  
   Check: <code>kubectl config get-contexts</code> or drop the flag to use the current context.
 
-- <strong><code>kubectl: command not found</code></strong>  
+- <strong><code>kubectl: command not found</strong></code>  
   Install kubectl and ensure it’s on <code>$PATH</code>.
 
 - <strong>RBAC/permission errors</strong> (e.g., when validating)  

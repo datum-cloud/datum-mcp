@@ -95,6 +95,13 @@ func (s *Service) RunSTDIO(port int) {
 				replyErr(req.ID, -32602, "Missing tool name")
 				continue
 			}
+
+			// friendly readiness check (no auto-login)
+			if err := s.K.Preflight(context.Background()); err != nil {
+				replyErr(req.ID, -32603, err.Error())
+				continue
+			}
+
 			switch name {
 			case "datum_list_crds":
 				res, err := s.ListCRDs(context.Background())

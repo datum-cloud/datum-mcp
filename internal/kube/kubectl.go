@@ -31,11 +31,55 @@ func (k *Kubectl) args(base ...string) []string {
 	return args
 }
 
+// like args() but DOES NOT inject -n (namespace)
+func (k *Kubectl) argsNoNS(base ...string) []string {
+	args := make([]string, 0, len(base)+2)
+	if k.Context != "" {
+		args = append(args, "--context", k.Context)
+	}
+	args = append(args, base...)
+	return args
+}
+
 func (k *Kubectl) run(ctx context.Context, stdin []byte, base ...string) ([]byte, []byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, k.Path, k.args(base...)...)
+	cmd.Env = k.Env
+	if len(stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	var out, err bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &err
+	runErr := cmd.Run()
+	return out.Bytes(), err.Bytes(), runErr
+}
+
+// runNoNS injects --context (if set) but NOT -n (namespace).
+func (k *Kubectl) runNoNS(ctx context.Context, stdin []byte, base ...string) ([]byte, []byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, k.Path, k.argsNoNS(base...)...)
+	cmd.Env = k.Env
+	if len(stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	var out, err bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &err
+	runErr := cmd.Run()
+	return out.Bytes(), err.Bytes(), runErr
+}
+
+// runBare injects neither --context nor -n; used for `kubectl config ...`
+func (k *Kubectl) runBare(ctx context.Context, stdin []byte, base ...string) ([]byte, []byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, k.Path, base...)
 	cmd.Env = k.Env
 	if len(stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(stdin)
@@ -133,4 +177,65 @@ func (k *Kubectl) ValidateYAML(ctx context.Context, manifest string) (ok bool, o
 		return false, errs, nil
 	}
 	return true, out, nil
+}
+
+// ---------------- preflight (no auto-login; friendly errors) ----------------
+
+// Preflight verifies context exists, cluster is reachable, and caller can list CRDs.
+// It does NOT log anyone in; it only reports what's missing.
+func (k *Kubectl) Preflight(ctx context.Context) error {
+	if err := k.ensureContextExists(ctx); err != nil {
+		return err
+	}
+	if err := k.ensureClusterReachable(ctx); err != nil {
+		return err
+	}
+	ok, _, _ := k.canI(ctx, "get", "crd")
+	if !ok {
+		return fmt.Errorf("not logged in or insufficient RBAC for CRDs. " +
+			"Please run `datumctl auth login`, ensure the correct kube context, and retry.")
+	}
+	return nil
+}
+
+func (k *Kubectl) ensureContextExists(ctx context.Context) error {
+	if k.Context == "" {
+		out, _, err := k.runBare(ctx, nil, "config", "current-context")
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			return fmt.Errorf("no current kubectl context. Use --kube-context or run `kubectl config use-context ...`")
+		}
+		return nil
+	}
+	// Exit non-zero if the named context does not exist.
+	_, errOut, err := k.runBare(ctx, nil, "config", "get-contexts", k.Context)
+	if err != nil {
+		return fmt.Errorf("kube context %q not found. Run `kubectl config get-contexts` and choose a valid one", k.Context)
+	}
+	_ = errOut
+	return nil
+}
+
+func (k *Kubectl) ensureClusterReachable(ctx context.Context) error {
+	// Prefer a raw /version probe; it doesn't assume core/v1 Services exist.
+	_, errOut, err := k.runNoNS(ctx, nil, "get", "--raw", "/version")
+	if err == nil {
+		return nil
+	}
+	// Fallback: kubectl version --short (older kubectl may not support --raw)
+	_, errOut2, err2 := k.runNoNS(ctx, nil, "version", "--short")
+	if err2 == nil {
+		return nil
+	}
+	return fmt.Errorf("cannot reach cluster for the selected context. %s %s",
+		strings.TrimSpace(string(errOut)), strings.TrimSpace(string(errOut2)))
+}
+
+// returns (allowed, output, errorRunningCmd)
+func (k *Kubectl) canI(ctx context.Context, verb, resource string) (bool, string, error) {
+	// --quiet exits 0 if allowed, 1 if denied
+	_, errOut, err := k.runNoNS(ctx, nil, "auth", "can-i", "--quiet", verb, resource)
+	if err != nil {
+		return false, strings.TrimSpace(string(errOut)), nil
+	}
+	return true, "", nil
 }
