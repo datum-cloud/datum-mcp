@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,7 +70,7 @@ func (s *Service) RunSTDIO(port int) {
 					"protocolVersion": "2025-06-18",
 					"serverInfo": map[string]any{
 						"name":    "datum-mcp",
-						"version": "2.2.0",
+						"version": "3.0.0",
 					},
 					"capabilities": map[string]any{},
 				},
@@ -96,72 +97,39 @@ func (s *Service) RunSTDIO(port int) {
 			}
 			switch name {
 			case "datum_list_crds":
-				res := s.ListCRDs()
+				res, err := s.ListCRDs(context.Background())
+				if err != nil {
+					replyErr(req.ID, -32603, err.Error())
+					continue
+				}
 				replyToolOK(req.ID, res)
 
-			case "datum_skeleton_crd":
-				// Hidden from tools/list, still callable by name
-				var r SkeletonReq
+			case "datum_get_crd":
+				var r GetCRDReq
 				if args != nil {
-					r.APIVersion, _ = args["apiVersion"].(string)
-					r.Kind, _ = args["kind"].(string)
+					r.Name, _ = args["name"].(string)
+					r.Mode, _ = args["mode"].(string)
 				}
-				resp, err := s.Skeleton(r)
+				res, err := s.GetCRD(context.Background(), r)
 				if err != nil {
 					replyErr(req.ID, -32603, err.Error())
 					continue
 				}
-				replyToolOK(req.ID, resp)
+				replyToolOK(req.ID, res)
 
-			case "datum_list_supported":
-				var r ListSupReq
-				if args != nil {
-					r.APIVersion, _ = args["apiVersion"].(string)
-					r.Kind, _ = args["kind"].(string)
-				}
-				resp, err := s.ListSupported(r)
-				if err != nil {
-					replyErr(req.ID, -32603, err.Error())
-					continue
-				}
-				replyToolOK(req.ID, resp)
-
-			case "datum_prune_crd":
-				var r PruneReq
+			case "datum_validate_yaml":
+				var r ValidateReq
 				if args != nil {
 					r.YAML, _ = args["yaml"].(string)
 				}
-				resp, err := s.Prune(r)
-				if err != nil {
-					if bad, _ := IsUnsupportedRemoved(err); bad {
-						replyErr(req.ID, -32603, err.Error())
-						continue
-					}
-					replyErr(req.ID, -32603, err.Error())
-					continue
-				}
-				replyToolOK(req.ID, resp)
-
-			case "datum_validate_crd":
-				var r ValReq
-				if args != nil {
-					r.YAML, _ = args["yaml"].(string)
-				}
-				resp := s.Validate(r)
-				replyToolOK(req.ID, resp)
-
-			case "datum_refresh_discovery":
-				ok, count, err := s.RefreshDiscovery()
-				if err != nil {
-					replyErr(req.ID, -32603, err.Error())
-					continue
-				}
-				replyToolOK(req.ID, map[string]any{"ok": ok, "count": count})
+				res := s.ValidateYAML(context.Background(), r)
+				replyToolOK(req.ID, res)
 
 			default:
 				replyErr(req.ID, -32601, fmt.Sprintf("Unknown tool %s", name))
 			}
 			continue
+
 		default:
 			if ignored[req.Method] {
 				if req.ID != nil {
@@ -224,28 +192,27 @@ func emit(resp jsonrpcResp) {
 }
 
 func toolsList() []map[string]any {
-	// Skeleton tool is ALWAYS hidden here.
 	return []map[string]any{
 		{
 			"name":        "datum_list_crds",
-			"description": "List all apiVersion/kind pairs known to the control plane.",
+			"description": "List CustomResourceDefinitions in the current cluster.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "required": []any{}},
 		},
 		{
-			"name":        "datum_list_supported",
-			"description": "List legal field paths (prefers spec.* when present; otherwise top-level fields).",
+			"name":        "datum_get_crd",
+			"description": "Get or describe a CRD by name. Mode: yaml|json|describe (default yaml).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"apiVersion": map[string]any{"type": "string"},
-					"kind":       map[string]any{"type": "string"},
+					"name": map[string]any{"type": "string"},
+					"mode": map[string]any{"type": "string"},
 				},
-				"required": []any{"apiVersion", "kind"},
+				"required": []any{"name"},
 			},
 		},
 		{
-			"name":        "datum_prune_crd",
-			"description": "Strip unsupported fields (422 if any were removed).",
+			"name":        "datum_validate_yaml",
+			"description": "Validate a manifest with kubectl server-side dry-run (strict).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -253,22 +220,6 @@ func toolsList() []map[string]any {
 				},
 				"required": []any{"yaml"},
 			},
-		},
-		{
-			"name":        "datum_validate_crd",
-			"description": "Validate with Kubernetes server dry-run (Strict field validation).",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"yaml": map[string]any{"type": "string"},
-				},
-				"required": []any{"yaml"},
-			},
-		},
-		{
-			"name":        "datum_refresh_discovery",
-			"description": "Refresh the OpenAPI discovery cache.",
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}, "required": []any{}},
 		},
 	}
 }

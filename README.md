@@ -5,47 +5,53 @@
 <h1 align="center">Datum MCP Server</h1>
 
 <p align="center">
-  Empower agents to help you manage your network infrastructure.
+  Tiny MCP bridge that lets agents use <code>kubectl</code> to discover CRDs and server-side validate manifests.
 </p>
 
 ---
 
 Datum provides an open-source network cloud platform for building and operating network-sensitive apps across managed global infra and your own clouds.  
-This repo ships the **Datum MCP server** — a small Go binary that exposes deterministic tools for CRDs and validation to Model Context Protocol (MCP) clients (e.g., Claude Desktop) and to simple CLI/HTTP tests.
+This repo ships the <strong>Datum MCP server</strong> — a small Go binary that exposes deterministic tools to Model Context Protocol (MCP) clients (e.g., Claude Desktop) and to simple CLI/HTTP tests. The server talks to <strong>your current Kubernetes context via kubectl</strong> (no GitHub/OpenAPI cache).
 
 - Website: https://www.datum.net
 
 ---
 
-## What it does
+## What it does (kubectl-backed)
 
-The server discovers Datum CRD schemas (and optionally your control-plane OpenAPI) and exposes these tools:
+At startup the server relies on your <strong>local kubectl</strong> and kubeconfig:
 
-- **`datum_list_crds`** – list `(apiVersion, kind)` pairs known to the control plane.
-- **`datum_list_supported`** – list legal field paths (prefers `spec.*` when present).
-- **`datum_prune_crd`** – strip unsupported fields (**422** if anything was removed).
-- **`datum_validate_crd`** – local schema validation (parse + allow‑list check).
-- **`datum_refresh_discovery`** – refresh the discovery cache.
+- Lists CRDs from the active cluster: <code>kubectl get crd -o json</code>
+- Fetches/describes a specific CRD: <code>kubectl get|describe crd &lt;name&gt;</code>
+- Validates YAML via server-side dry-run: <code>kubectl apply --dry-run=server --validate=true -f -</code>
 
-> **Discovery behavior (concise):**  
-> • Default is **GitHub only** (freshest published Datum CRDs).  
-> • If you set `DATUM_OPENAPI_BASE` for a run, the server also ingests your control‑plane **OpenAPI** and adds any **new** `(apiVersion, kind)` pairs found there.  
-> • When a pair exists in both sources, **GitHub wins** (its schema is authoritative).
+### Tools exposed
+
+- <strong><code>datum_list_crds</code></strong> – return installed CRDs with <code>{name, group, kind, versions[]}</code>.
+- <strong><code>datum_get_crd</code></strong> – get or describe a CRD by <strong>resource name</strong> (e.g. <code>httpproxies.networking.datumapis.com</code>).<br>
+  Args: <code>{ "name": "...", "mode": "yaml|json|describe" }</code> (default <code>yaml</code>).
+- <strong><code>datum_validate_yaml</code></strong> – server-side validation (no apply).<br>
+  Args: <code>{ "yaml": "&lt;manifest text&gt;" }</code>
+
+<blockquote>
+MCP traffic uses <strong>STDIO</strong>. An optional local <strong>HTTP</strong> port is available for easy <code>curl</code> debugging.
+</blockquote>
 
 ---
 
 ## Requirements
 
-- Go **1.20+** (`go version`)
-- Git + internet access (for GitHub CRDs)
-- Optional: `curl`, `jq` for quick tests
-- Optional: Claude Desktop (for MCP usage)
+- Go <strong>1.20+</strong>
+- <strong>kubectl</strong> on your <code>$PATH</code>
+- A working <strong>kubeconfig</strong> & context (or pass <code>--kube-context</code>)
+- RBAC that allows:
+  - <code>get</code> on <code>customresourcedefinitions.apiextensions.k8s.io</code>
+  - server-side dry-run of the resources you validate
+- Optional: Claude Desktop (for MCP usage), <code>curl</code> for HTTP tests
 
 ---
 
 ## Install
-
-Build from source:
 
 ```bash
 git clone https://github.com/datum-cloud/datum-mcp.git
@@ -59,118 +65,90 @@ sudo mv ./datum-mcp /usr/local/bin
 
 ---
 
-## Configuration
+## Run
 
-Environment variables (all optional, recommended to set **per run**):
+Flags:
 
-- `DATUM_OPENAPI_BASE` — if set, the server also fetches `<DATUM_OPENAPI_BASE>/openapi/v3` (JSON or YAML). Use inline on the command you run so it doesn’t persist.
-- `DATUM_ACCESS_TOKEN` — bearer token to use when calling the control‑plane OpenAPI.
-- `HTTPS_PROXY` / `HTTP_PROXY` — standard proxy settings if required by your network.
+- <code>--port &lt;n&gt;</code> – also serve a local HTTP debug API on <code>127.0.0.1:&lt;n&gt;</code>
+- <code>--kube-context &lt;name&gt;</code> – choose a kube context (otherwise uses current)
+- <code>--namespace &lt;ns&gt;</code> – default namespace for validation (if YAML omits it)
+- <code>--kubectl &lt;path&gt;</code> – path to kubectl (default <code>kubectl</code>)
 
-Logging: minimal logs go to **stderr** prefixed with `[datum-mcp]`.
+Examples:
+
+```bash
+# Use current context
+datum-mcp --port 8080
+
+# Or pick an explicit context and default namespace
+datum-mcp --port 8080 --kube-context kind-datum --namespace default
+```
+
+You should see:
+```
+[datum-mcp] STDIO mode ready
+```
 
 ---
 
-## Quick start: manual CLI/HTTP smoke test
+## HTTP debug (curl) quickstart
 
-Run the server with an HTTP port for easy `curl` tests (**MCP still uses STDIO**):
+> MCP clients don’t use these endpoints; they’re just for manual testing.
 
+<strong>List CRDs</strong>
 ```bash
-datum-mcp --port 7777
-# [datum-mcp] STDIO mode ready
-# HTTP listening on 127.0.0.1:7777
+curl -s http://127.0.0.1:8080/datum/list_crds | jq
 ```
 
-In another terminal:
-
+<strong>Get a CRD (YAML / JSON / describe)</strong>
 ```bash
-# 1) List CRDs discovered from GitHub
-curl -s http://127.0.0.1:7777/datum/list_crds | jq
+curl -s -X POST http://127.0.0.1:8080/datum/get_crd   -H 'Content-Type: application/json'   -d '{"name":"httpproxies.networking.datumapis.com","mode":"yaml"}' | head
+```
 
-# 2) Pick one api/kind
-API=$(curl -s http://127.0.0.1:7777/datum/list_crds | jq -r '.crds[0][0]')
-KIND=$(curl -s http://127.0.0.1:7777/datum/list_crds | jq -r '.crds[0][1]')
-
-# 3) List supported fields (safe quoting with jq -n)
-curl -s -X POST http://127.0.0.1:7777/datum/list_supported \
-  -H 'content-type: application/json' \
-  -d "$(jq -n --arg api "$API" --arg kind "$KIND" '{apiVersion:$api, kind:$kind}')" | jq
-
-# 4) Create a minimal YAML and validate it
-cat > /tmp/datum.yaml <<YAML
-apiVersion: ${API}
-kind: ${KIND}
+<strong>Validate a manifest (server dry-run)</strong>
+```bash
+curl -s -X POST http://127.0.0.1:8080/datum/validate_yaml   -H 'Content-Type: application/json'   -d @- <<'JSON'
+{"yaml":"apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: example
-spec: {}
-YAML
-
-curl -s -X POST http://127.0.0.1:7777/datum/validate_crd \
-  -H 'content-type: application/json' \
-  -d "$(jq -n --rawfile y /tmp/datum.yaml '{yaml:$y}')" | jq
-
-# 5) Exercise prune (returns 422 if anything is removed)
-echo $'\noops: true' >> /tmp/datum.yaml
-curl -s -w '\nHTTP %{http_code}\n' -X POST http://127.0.0.1:7777/datum/prune_crd \
-  -H 'content-type: application/json' \
-  -d "$(jq -n --rawfile y /tmp/datum.yaml '{yaml:$y}')"
+  name: demo
+  namespace: default
+data:
+  k: v
+"}
+JSON
+# → {"valid":true,"output":"configmap/demo created (server dry run)"}
 ```
 
-> The HTTP port is for manual testing only. **MCP clients (like Claude) use STDIO**, not HTTP.
+Multi-doc YAML (<code>---</code>) is supported.
 
 ---
 
 ## Use with Claude Desktop (MCP over STDIO)
 
-Claude talks to MCP servers over STDIO — point it at the **binary**, not the port.
+Point Claude at the binary (not the HTTP port).
 
-1. Open Claude config:
-   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-   - Linux: `~/.config/Claude/claude_desktop_config.json`  
-   - Windows: `%APPDATA%\\Claude\\claude_desktop_config.json`
+<strong>Config file</strong> (macOS):  
+<code>~/Library/Application Support/Claude/claude_desktop_config.json</code>
 
-2. Add an entry (use your absolute path):
+Add or edit:
 
 ```json
 {
   "mcpServers": {
     "datum_mcp": {
       "command": "/absolute/path/to/datum-mcp",
-      "args": [],
-      "env": {
-        "DATUM_OPENAPI_BASE": "",
-        "DATUM_ACCESS_TOKEN": ""
-      }
+      "args": ["--kube-context","kind-datum","--namespace","default"]
     }
   }
 }
 ```
 
-3. Restart Claude Desktop.
+Restart Claude Desktop. In a chat, enable the tools and ask it to call:
 
-4. In a new chat, ask Claude to call tools:
-   - `datum_list_crds`
-   - `datum_list_supported` with an `apiVersion` and `kind`
-   - `datum_validate_crd` with your YAML
-   - `datum_prune_crd` with your YAML to remove unsupported fields
-
----
-
-## (Optional) Integrate with `datumctl`
-
-Expose the MCP server via `datumctl` in one of two simple ways:
-
-**Shell alias (fastest):**
-```bash
-alias datumctl-mcp="datum-mcp"
-```
-
-**Subcommand:** have `datumctl` spawn the installed `datum-mcp` (from `PATH` or `DATUM_MCP_BIN`) and pass STDIO through, so users can run:
-```bash
-datumctl mcp
-```
-
-Since the server is pure Go, you can also embed it in‑process, but the standalone binary keeps upgrades and distribution trivial.
+- <code>datum_list_crds</code>
+- <code>datum_get_crd</code> with <code>{ "name": "...", "mode": "describe" }</code>
+- <code>datum_validate_yaml</code> with your manifest
 
 ---
 
@@ -178,10 +156,12 @@ Since the server is pure Go, you can also embed it in‑process, but the standal
 
 ```
 cmd/
-  mcp/           # main.go (STDIO MCP; optional HTTP for testing)
+  mcp/           # main.go (STDIO MCP; optional HTTP)
 internal/
-  discovery/     # discovery.go: GitHub CRDs + optional /openapi/v3 ingestion
-  mcp/           # service.go (tools), stdio/http layers
+  kube/          # kubectl wrapper (list/get/validate)
+  mcp/           # service (tool impl), stdio/http adapters
+assets/
+  logo.png
 ```
 
 Build:
@@ -194,25 +174,19 @@ go build -o datum-mcp ./cmd/mcp
 
 ## Troubleshooting
 
-- **Claude: “failed to start server”**  
-  Check the absolute path in `claude_desktop_config.json` and executable bit:  
-  `chmod +x /absolute/path/to/datum-mcp`.
+- <strong>“context was not found for specified context”</strong>  
+  You passed a non-existent <code>--kube-context</code>.  
+  Check: <code>kubectl config get-contexts</code> or drop the flag to use the current context.
 
-- **`list_crds` is empty**  
-  No internet or GitHub blocked. To include your CP OpenAPI for a single run:
-  ```bash
-  DATUM_OPENAPI_BASE="https://<cp>/api" DATUM_ACCESS_TOKEN="<token>" datum-mcp --port 7777
-  ```
-  Then simply run `datum-mcp` with no env to go back to GitHub‑only.
+- <strong><code>kubectl: command not found</code></strong>  
+  Install kubectl and ensure it’s on <code>$PATH</code>.
 
-- **`prune_crd` returns HTTP 422**  
-  That’s expected when unsupported fields were removed. Fix the YAML and retry.
+- <strong>RBAC/permission errors</strong> (e.g., when validating)  
+  Dry-run still enforces authz. Check:  
+  <code>kubectl auth can-i get crd</code> and permissions for the resources you validate.
 
-- **Corporate proxy**  
-  Set `HTTPS_PROXY` / `HTTP_PROXY` before launching `datum-mcp`.
-
-- **Go toolchain mismatch**  
-  If `go mod tidy` complains about version, set `go 1.20` in `go.mod` or upgrade Go.
+- <strong>Validation says unknown field</strong>  
+  That’s coming from the API server (good!). Fix the manifest or select the right CRD/version.
 
 ---
 
