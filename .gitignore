@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+.venv/
+
+# JetBrains
+.idea/
+
+# Go build output (root-level binary)
+datum-mcp
