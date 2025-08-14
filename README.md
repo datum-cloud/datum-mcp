@@ -5,32 +5,34 @@
 <h1 align="center">Datum MCP Server</h1>
 
 <p align="center">
-  Tiny MCP bridge that lets agents use <code>kubectl</code> to discover CRDs and server-side validate manifests.
+  Tiny MCP bridge that lets agents use <code>kubectl</code> to discover CRDs and server‑side validate manifests.
 </p>
 
 ---
 
-Datum provides an open-source network cloud platform for building and operating network-sensitive apps across managed global infra and your own clouds.  
+Datum provides an open-source network cloud platform for building and operating network‑sensitive apps across managed global infra and your own clouds.  
 This repo ships the <strong>Datum MCP server</strong> — a small Go binary that exposes deterministic tools to Model Context Protocol (MCP) clients (e.g., Claude Desktop) and to simple CLI/HTTP tests. The server talks to <strong>your current Kubernetes context via kubectl</strong> (no GitHub/OpenAPI cache).
+
+Pair it with an MCP-enabled assistant (e.g., Claude) to <strong>generate new CRD manifests from plain-English prompts</strong>: the assistant discovers the CRD in your cluster, inspects its schema, drafts YAML, and iterates via <code>datum_validate_yaml</code> until the API server accepts it. The server <strong>never applies</strong> changes—<strong>you</strong> review/commit the manifest or run <code>kubectl apply -f</code> yourself, keeping all changes human-gated.
 
 - Website: https://www.datum.net
 
 ---
 
-## What it does (kubectl-backed)
+## What it does (kubectl‑backed)
 
 At startup the server relies on your <strong>local kubectl</strong> and kubeconfig:
 
 - Lists CRDs from the active cluster: <code>kubectl get crd -o json</code>
 - Fetches/describes a specific CRD: <code>kubectl get|describe crd &lt;name&gt;</code>
-- Validates YAML via server-side dry-run: <code>kubectl apply --dry-run=server --validate=true -f -</code>
+- Validates YAML via server‑side dry‑run: <code>kubectl apply --dry-run=server --validate=true -f -</code>
 
 ### Tools exposed
 
 - <strong><code>datum_list_crds</code></strong> – return installed CRDs with <code>{name, group, kind, versions[]}</code>.
 - <strong><code>datum_get_crd</code></strong> – get or describe a CRD by <strong>resource name</strong> (e.g. <code>httpproxies.networking.datumapis.com</code>).<br>
   Args: <code>{ "name": "...", "mode": "yaml|json|describe" }</code> (default <code>yaml</code>).
-- <strong><code>datum_validate_yaml</code></strong> – server-side validation (no apply).<br>
+- <strong><code>datum_validate_yaml</code></strong> – server‑side validation (no apply).<br>
   Args: <code>{ "yaml": "&lt;manifest text&gt;" }</code>
 
 <blockquote>
@@ -46,12 +48,12 @@ MCP traffic uses <strong>STDIO</strong>. An optional local <strong>HTTP</strong>
 - A working <strong>kubeconfig</strong> & context (or pass <code>--kube-context</code>)
 - RBAC that allows:
   - <code>get</code> on <code>customresourcedefinitions.apiextensions.k8s.io</code>
-  - server-side dry-run of the resources you validate
+  - server‑side dry‑run of the resources you validate
 - Optional: Claude Desktop (for MCP usage), <code>curl</code> for HTTP tests
 
 ---
 
-## Auth & preflight (no auto-login)
+## Auth & preflight (no auto‑login)
 
 This server <strong>never logs you in</strong>. It uses whatever credentials are present in your kubeconfig.
 
@@ -59,7 +61,7 @@ On <strong>every</strong> tool call (HTTP or MCP), a preflight runs:
 
 1. <strong>Context exists</strong> — errors if the named <code>--kube-context</code> is not present.  
 2. <strong>Cluster reachable</strong> — probes the API via <code>kubectl get --raw /version</code> (fallback: <code>kubectl version --short</code>).  
-3. <strong>RBAC</strong> — checks <code>kubectl auth can-i --quiet get crd</code>. Validation also requires auth for the kinds you dry-run.
+3. <strong>RBAC</strong> — checks <code>kubectl auth can-i --quiet get crd</code>. Validation also requires auth for the kinds you dry‑run.
 
 If any step fails, the endpoint returns <strong>401 Unauthorized</strong> with a helpful message (e.g., “You must be logged in…”, “context not found”, or “insufficient RBAC”).  
 To obtain credentials for Datum clusters, run your usual flow (for example: <code>datumctl auth login</code> and update kubeconfig), then retry — you <strong>don’t</strong> need to restart the server.
@@ -129,7 +131,7 @@ curl -s http://127.0.0.1:8080/datum/list_crds | jq
 curl -s -X POST http://127.0.0.1:8080/datum/get_crd   -H 'Content-Type: application/json'   -d '{"name":"httpproxies.networking.datumapis.com","mode":"yaml"}' | head
 ```
 
-<strong>Validate a manifest (server dry-run)</strong>
+<strong>Validate a manifest (server dry‑run)</strong>
 ```bash
 curl -s -X POST http://127.0.0.1:8080/datum/validate_yaml   -H 'Content-Type: application/json'   -d @- <<'JSON'
 {"yaml":"apiVersion: v1
@@ -144,7 +146,7 @@ JSON
 # → {"valid":true,"output":"configmap/demo created (server dry run)"}
 ```
 
-Multi-doc YAML (<code>---</code>) is supported.
+Multi‑doc YAML (<code>---</code>) is supported.
 
 ---
 
@@ -176,6 +178,58 @@ Restart Claude Desktop. In a chat, enable the tools and ask it to call:
 
 ---
 
+## Guided example: create an <code>HTTPProxy</code> with two routes
+
+The AI assistant uses tools to discover the CRD, inspect it, author YAML, and validate it.
+
+### What you ask Claude
+> “Use datum mcp to create an HTTPProxy named <code>bittensor-dapp</code> that routes <code>/api/*</code> to <code>https://api.cloud.datum.net</code> after rewriting the path prefix from <code>/api</code> to <code>/</code>, and routes all other paths to <code>https://static.cloud.datum.net</code>.”
+
+### What Claude typically does
+1) **Check availability** – calls <code>datum_list_crds</code> and confirms there’s an <code>HTTPProxy</code> CRD (e.g., <code>networking.datumapis.com/v1alpha</code>).  
+2) **Inspect schema** – calls <code>datum_get_crd</code> with <code>{"name":"httpproxies.networking.datumapis.com","mode":"yaml"}</code> (or <code>"describe"</code>) to understand fields.  
+3) **Draft manifest** – constructs YAML with two rules: one for <code>/api/*</code> with prefix‑rewrite, and a default route for everything else.  
+4) **Validate** – calls <code>datum_validate_yaml</code> and iterates until <code>{"valid":true,...}</code>.
+
+### Example manifest (illustrative)
+```yaml
+apiVersion: networking.datumapis.com/v1alpha
+kind: HTTPProxy
+metadata:
+  name: bittensor-dapp
+  namespace: default
+spec:
+  rules:
+    # Rule 1: Route /api/* to https://api.cloud.datum.net with path rewriting
+    - name: api-routes
+      matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backends:
+        - endpoint: https://api.cloud.datum.net
+
+    # Rule 2: Route all other paths to https://static.cloud.datum.net
+    - name: static-routes
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backends:
+        - endpoint: https://static.cloud.datum.net
+```
+
+> After Claude returns a valid manifest, you can save it and apply it:
+> <code>kubectl apply -f ./httpproxy.yaml</code>
+
+---
+
 ## Project layout
 
 ```
@@ -199,18 +253,15 @@ go build -o datum-mcp ./cmd/mcp
 ## Troubleshooting
 
 - <strong>“context was not found for specified context”</strong>  
-  You passed a non-existent <code>--kube-context</code>.  
+  You passed a non‑existent <code>--kube-context</code>.  
   Check: <code>kubectl config get-contexts</code> or drop the flag to use the current context.
 
-- <strong><code>kubectl: command not found</strong></code>  
+- <strong><code>kubectl: command not found</code></strong>  
   Install kubectl and ensure it’s on <code>$PATH</code>.
 
 - <strong>RBAC/permission errors</strong> (e.g., when validating)  
-  Dry-run still enforces authz. Check:  
+  Dry‑run still enforces authz. Check:  
   <code>kubectl auth can-i get crd</code> and permissions for the resources you validate.
-
-- <strong>Validation says unknown field</strong>  
-  That’s coming from the API server (good!). Fix the manifest or select the right CRD/version.
 
 ---
 
