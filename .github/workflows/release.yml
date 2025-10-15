@@ -1,0 +1,62 @@
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload install.sh to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: scripts/install.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build darwin/arm64
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/datum-mcp_darwin_arm64 ./cmd/datum-mcp
+
+      - name: Build darwin/amd64
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/datum-mcp_darwin_amd64 ./cmd/datum-mcp
+
+      - name: Build linux/amd64
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/datum-mcp_linux_amd64 ./cmd/datum-mcp
+
+      - name: Build windows/amd64
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/datum-mcp_windows_amd64.exe ./cmd/datum-mcp
+
+      - name: Build windows/arm64
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o dist/datum-mcp_windows_arm64.exe ./cmd/datum-mcp
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/datum-mcp_darwin_arm64
+            dist/datum-mcp_darwin_amd64
+            dist/datum-mcp_linux_amd64
+            dist/datum-mcp_windows_amd64.exe
+            dist/datum-mcp_windows_arm64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
