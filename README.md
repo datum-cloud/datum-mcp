@@ -41,7 +41,7 @@ Add this to your MCP client config to run the server via stdio:
 
 (Optionally) Add to Cursor (macOS/Linux):
 
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-light.svg)](https://cursor.com/en-US/install-mcp?name=datum-mcp&config=eyJjb21tYW5kIjoiZGF0dW0tbWNwIn0)
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-light.svg)](https://cursor.com/en-US/install-mcp?name=datum-mcp&config=eyJ0eXBlIjoic3RkaW8iLCJlbnYiOnt9LCJjb21tYW5kIjoiL3Vzci9sb2NhbC9iaW4vZGF0dW0tbWNwICJ9)
 
 
 Windows:
