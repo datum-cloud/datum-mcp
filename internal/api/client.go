@@ -7,162 +7,118 @@ import (
 	"net/http"
 	"strings"
 
-	netv1alpha "go.datum.net/network-services-operator/api/v1alpha"
-	resmanv1alpha1 "go.miloapis.com/milo/pkg/apis/resourcemanager/v1alpha1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type Client struct{}
-
-func NewClient(base string) *Client { return &Client{} }
-
-// Domains (project control-plane + networking.datumapis.com/v1alpha)
-func (c *Client) GetDomain(ctx context.Context, project, id string, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
-	if err != nil {
-		return err
+// resolveGVKs resolves the preferred object and list GVKs for a given Group/Kind
+// using the shared RESTMapper. It returns an error if mapping cannot be resolved.
+func resolveGVKs(group, kind string) (schema.GroupVersionKind, schema.GroupVersionKind, error) {
+	if sharedMapper == nil {
+		return schema.GroupVersionKind{}, schema.GroupVersionKind{}, fmt.Errorf("rest mapper not initialized")
 	}
-	var obj netv1alpha.Domain
-	if err := cli.Get(ctx, ctrlclient.ObjectKey{Namespace: "default", Name: id}, &obj); err != nil {
-		return err
+	m, err := sharedMapper.RESTMapping(schema.GroupKind{Group: group, Kind: kind})
+	if err != nil || m == nil {
+		return schema.GroupVersionKind{}, schema.GroupVersionKind{}, fmt.Errorf("failed to resolve GVK for %s/%s: %w", group, kind, err)
 	}
-	return assignJSON(out, &obj)
+	objGVK := m.GroupVersionKind
+	listGVK := schema.GroupVersionKind{Group: objGVK.Group, Version: objGVK.Version, Kind: objGVK.Kind + "List"}
+	return objGVK, listGVK, nil
 }
 
-func (c *Client) ListDomains(ctx context.Context, project string, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
+// Generic unstructured helpers using the shared RESTMapper
+func FetchObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string) (*unstructured.Unstructured, error) {
+	objGVK, _, err := resolveGVKs(group, kind)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var list netv1alpha.DomainList
-	if err := cli.List(ctx, &list, ctrlclient.InNamespace("default")); err != nil {
-		return err
+	var obj unstructured.Unstructured
+	obj.SetGroupVersionKind(objGVK)
+	if err := cli.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: name}, &obj); err != nil {
+		return nil, err
 	}
-	return assignJSON(out, &list)
+	return &obj, nil
 }
 
-func (c *Client) CreateDomain(ctx context.Context, project string, in any, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
+func FetchList(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string) (*unstructured.UnstructuredList, error) {
+	_, listGVK, err := resolveGVKs(group, kind)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var obj netv1alpha.Domain
-	if err := assignJSON(&obj, in); err != nil {
-		return err
+	var list unstructured.UnstructuredList
+	list.SetGroupVersionKind(listGVK)
+	if namespace != "" {
+		if err := cli.List(ctx, &list, ctrlclient.InNamespace(namespace)); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := cli.List(ctx, &list); err != nil {
+			return nil, err
+		}
 	}
-	obj.Namespace = "default"
+	return &list, nil
+}
+
+func CreateObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string, in any) (*unstructured.Unstructured, error) {
+	objGVK, _, err := resolveGVKs(group, kind)
+	if err != nil {
+		return nil, err
+	}
+	var obj unstructured.Unstructured
+	obj.SetGroupVersionKind(objGVK)
+	if err := assignJSON(&obj.Object, in); err != nil {
+		return nil, err
+	}
+	if namespace != "" {
+		obj.SetNamespace(namespace)
+	}
 	if err := cli.Create(ctx, &obj); err != nil {
-		return err
+		return nil, err
 	}
-	return assignJSON(out, &obj)
+	return &obj, nil
 }
 
-func (c *Client) UpdateDomain(ctx context.Context, project, id string, in any, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
+func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string, in any) (*unstructured.Unstructured, error) {
+	objGVK, _, err := resolveGVKs(group, kind)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var obj netv1alpha.Domain
-	if err := cli.Get(ctx, ctrlclient.ObjectKey{Namespace: "default", Name: id}, &obj); err != nil {
-		return err
+	var obj unstructured.Unstructured
+	obj.SetGroupVersionKind(objGVK)
+	if err := cli.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: name}, &obj); err != nil {
+		return nil, err
 	}
-	var patch netv1alpha.Domain
-	if err := assignJSON(&patch, in); err != nil {
-		return err
+	var patch unstructured.Unstructured
+	if err := assignJSON(&patch.Object, in); err != nil {
+		return nil, err
 	}
-	obj.Spec = patch.Spec
+	if spec, found, _ := unstructured.NestedFieldNoCopy(patch.Object, "spec"); found {
+		_ = unstructured.SetNestedField(obj.Object, spec, "spec")
+	}
 	if err := cli.Update(ctx, &obj); err != nil {
-		return err
+		return nil, err
 	}
-	return assignJSON(out, &obj)
+	return &obj, nil
 }
 
-func (c *Client) DeleteDomain(ctx context.Context, project, id string) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
+func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string) error {
+	objGVK, _, err := resolveGVKs(group, kind)
 	if err != nil {
 		return err
 	}
-	var obj netv1alpha.Domain
-	obj.Namespace = "default"
-	obj.Name = id
-	return cli.Delete(ctx, &obj)
-}
-
-// HTTP Proxies (project control-plane + networking.datumapis.com/v1alpha)
-func (c *Client) GetHTTPProxy(ctx context.Context, project, id string, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
-	if err != nil {
-		return err
+	var obj unstructured.Unstructured
+	obj.SetGroupVersionKind(objGVK)
+	if namespace != "" {
+		obj.SetNamespace(namespace)
 	}
-	var obj netv1alpha.HTTPProxy
-	if err := cli.Get(ctx, ctrlclient.ObjectKey{Namespace: "default", Name: id}, &obj); err != nil {
-		return err
-	}
-	return assignJSON(out, &obj)
-}
-
-func (c *Client) ListHTTPProxies(ctx context.Context, project string, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
-	if err != nil {
-		return err
-	}
-	var list netv1alpha.HTTPProxyList
-	if err := cli.List(ctx, &list, ctrlclient.InNamespace("default")); err != nil {
-		return err
-	}
-	return assignJSON(out, &list)
-}
-
-func (c *Client) CreateHTTPProxy(ctx context.Context, project string, in any, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
-	if err != nil {
-		return err
-	}
-	var obj netv1alpha.HTTPProxy
-	if err := assignJSON(&obj, in); err != nil {
-		return err
-	}
-	obj.Namespace = "default"
-	if err := cli.Create(ctx, &obj); err != nil {
-		return err
-	}
-	return assignJSON(out, &obj)
-}
-
-func (c *Client) UpdateHTTPProxy(ctx context.Context, project, id string, in any, out any) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
-	if err != nil {
-		return err
-	}
-	var obj netv1alpha.HTTPProxy
-	if err := cli.Get(ctx, ctrlclient.ObjectKey{Namespace: "default", Name: id}, &obj); err != nil {
-		return err
-	}
-	var patch netv1alpha.HTTPProxy
-	if err := assignJSON(&patch, in); err != nil {
-		return err
-	}
-	obj.Spec = patch.Spec
-	if err := cli.Update(ctx, &obj); err != nil {
-		return err
-	}
-	return assignJSON(out, &obj)
-}
-
-func (c *Client) DeleteHTTPProxy(ctx context.Context, project, id string) error {
-	cli, err := NewProjectControlPlaneClient(ctx, project)
-	if err != nil {
-		return err
-	}
-	var obj netv1alpha.HTTPProxy
-	obj.Namespace = "default"
-	obj.Name = id
+	obj.SetName(name)
 	return cli.Delete(ctx, &obj)
 }
 
 // Discovery: CRD schema via OpenAPI v3 direct path: /openapi/v3/apis/<group>/<version>[/<kind>]
-func (c *Client) GetCRDSchema(ctx context.Context, project, group, version, kind string, out any) error {
+func GetResourceDefinition(ctx context.Context, project, group, version, kind string, out any) error {
 	httpClient, host, err := NewProjectHTTPClient(ctx, project)
 	if err != nil {
 		return err
@@ -222,7 +178,7 @@ func (c *Client) GetCRDSchema(ctx context.Context, project, group, version, kind
 }
 
 // List CRDs under the project control-plane
-func (c *Client) ListCRDs(ctx context.Context, project string, out any) error {
+func ListResourceDefinitions(ctx context.Context, project string, out any) error {
 	httpClient, host, err := NewProjectHTTPClient(ctx, project)
 	if err != nil {
 		return err
@@ -315,61 +271,6 @@ func (c *Client) ListCRDs(ctx context.Context, project string, out any) error {
 		groupsOut = append(groupsOut, map[string]any{"group": g, "versions": versions})
 	}
 	return assignJSON(out, map[string]any{"groups": groupsOut})
-}
-
-// Organization memberships for a user (group/versioned resource under user control-plane)
-func (c *Client) ListOrganizationMemberships(ctx context.Context, userID string, out any) error {
-	cli, err := NewUserControlPlaneClient(ctx, userID)
-	if err != nil {
-		return err
-	}
-	var list resmanv1alpha1.OrganizationMembershipList
-	if err := cli.List(ctx, &list); err != nil {
-		return err
-	}
-	return assignJSON(out, &list)
-}
-
-// Projects under an organization (group/versioned resource under org control-plane)
-func (c *Client) ListProjects(ctx context.Context, org string, out any) error {
-	cli, err := NewOrgControlPlaneClient(ctx, org)
-	if err != nil {
-		return err
-	}
-	var list resmanv1alpha1.ProjectList
-	if err := cli.List(ctx, &list); err != nil {
-		return err
-	}
-	return assignJSON(out, &list)
-}
-
-// Organization memberships under an organization (org control-plane)
-func (c *Client) ListOrgMemberships(ctx context.Context, org string, out any) error {
-	cli, err := NewOrgControlPlaneClient(ctx, org)
-	if err != nil {
-		return err
-	}
-	var list resmanv1alpha1.OrganizationMembershipList
-	if err := cli.List(ctx, &list, ctrlclient.InNamespace("organization-"+org)); err != nil {
-		return err
-	}
-	return assignJSON(out, &list)
-}
-
-// Create a project under an organization (org control-plane)
-func (c *Client) CreateProject(ctx context.Context, org string, in any, out any) error {
-	cli, err := NewOrgControlPlaneClient(ctx, org)
-	if err != nil {
-		return err
-	}
-	var obj resmanv1alpha1.Project
-	if err := assignJSON(&obj, in); err != nil {
-		return err
-	}
-	if err := cli.Create(ctx, &obj); err != nil {
-		return err
-	}
-	return assignJSON(out, &obj)
 }
 
 // assignJSON marshals v and unmarshals into out (pointer), accommodating *any receivers.
