@@ -22,7 +22,7 @@ curl -fsSL https://github.com/datum-cloud/datum-mcp/releases/latest/download/ins
 - Manual download:
   - Download the appropriate binary from the [latest release](https://github.com/datum-cloud/datum-mcp/releases/latest)
     - macOS: `datum-mcp_darwin_arm64`, `datum-mcp_darwin_amd64`
-    - Linux: `datum-mcp_linux_amd64`
+    - Linux: `datum-mcp_linux_amd64`, `datum-mcp_linux_arm64`
     - Windows: `datum-mcp_windows_amd64.exe` (and optionally `windows_arm64`)
   - Rename to `datum-mcp` (or `datum-mcp.exe` on Windows) and place it somewhere on your PATH.
 
