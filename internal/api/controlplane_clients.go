@@ -4,31 +4,29 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
-	netv1alpha "go.datum.net/network-services-operator/api/v1alpha"
-	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
-	resmanv1alpha1 "go.miloapis.com/milo/pkg/apis/resourcemanager/v1alpha1"
-
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery/cached/disk"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
+
+	"net/url"
+	"path/filepath"
+	"sync"
+
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/datum-cloud/datum-mcp/internal/authutil"
 )
 
-func registerSchemes(s *runtime.Scheme) error {
-	if err := resmanv1alpha1.AddToScheme(s); err != nil {
-		return err
-	}
-	if err := iamv1alpha1.AddToScheme(s); err != nil {
-		return err
-	}
-	if err := netv1alpha.AddToScheme(s); err != nil {
-		return err
-	}
-	return nil
-}
+var (
+	sharedMapper   meta.RESTMapper
+	sharedMapperMu sync.Mutex
+)
 
 func newPrefixedClient(ctx context.Context, basePrefix string, bearer string) (ctrlclient.Client, error) {
 	apiHost, err := authutil.GetAPIHostname()
@@ -44,18 +42,62 @@ func newPrefixedClient(ctx context.Context, basePrefix string, bearer string) (c
 			if rt == nil {
 				rt = http.DefaultTransport
 			}
-			return &prefixRoundTripper{base: basePrefix, next: rt}
+			// Inject auth so first request triggers EnsureAuth (opens browser if needed),
+			// then apply the project/org/user control-plane path prefix.
+			authed := &authRoundTripper{next: rt}
+			return &prefixRoundTripper{base: basePrefix, next: authed}
 		},
 	}
-	scheme := runtime.NewScheme()
-	if err := registerSchemes(scheme); err != nil {
+	mapper, err := getOrCreateMapper(cfg)
+	if err != nil {
 		return nil, err
 	}
-	c, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme})
+	scheme := runtime.NewScheme()
+	c, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme, Mapper: mapper})
 	if err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+func getOrCreateMapper(cfg *rest.Config) (meta.RESTMapper, error) {
+	sharedMapperMu.Lock()
+	defer sharedMapperMu.Unlock()
+	if sharedMapper != nil {
+		return sharedMapper, nil
+	}
+	// Build a DeferredDiscoveryRESTMapper backed by on-disk cached discovery, per host
+	cacheBaseDir := defaultCacheBaseDir()
+	hostDir := safeHostComponent(cfg.Host)
+	discoveryCacheDir := filepath.Join(cacheBaseDir, hostDir, "discovery")
+	httpCacheDir := filepath.Join(cacheBaseDir, hostDir, "http")
+	dc, err := disk.NewCachedDiscoveryClientForConfig(cfg, discoveryCacheDir, httpCacheDir, 10*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	sharedMapper = restmapper.NewDeferredDiscoveryRESTMapper(dc)
+	return sharedMapper, nil
+}
+
+func defaultCacheBaseDir() string {
+	if d, err := os.UserCacheDir(); err == nil && d != "" {
+		return filepath.Join(d, "datum-mcp")
+	}
+	// Fallback to current directory if user cache dir is not available
+	return ".kube-cache"
+}
+
+// safeHostComponent converts a full URL host into a filesystem-friendly segment
+// e.g., "https://api.example.com" or "api.example.com" -> "api.example.com"
+func safeHostComponent(host string) string {
+	if host == "" {
+		return "unknown-host"
+	}
+	if u, err := url.Parse(host); err == nil && u.Host != "" {
+		return u.Host
+	}
+	// host might already be just the hostname
+	return strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
 }
 
 func bearerFromKeychain(ctx context.Context) (string, error) {

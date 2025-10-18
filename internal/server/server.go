@@ -16,7 +16,7 @@ import (
 	"github.com/datum-cloud/datum-mcp/internal/authutil"
 	"github.com/datum-cloud/datum-mcp/internal/org"
 	"github.com/datum-cloud/datum-mcp/internal/project"
-	resmanv1alpha1 "go.miloapis.com/milo/pkg/apis/resourcemanager/v1alpha1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type ProjectSetInput struct {
@@ -74,13 +74,6 @@ type UsersInput struct {
 	Org    string `json:"org,omitempty"`
 }
 
-func ensureClient(ctx context.Context) (*api.Client, error) {
-	if _, err := auth.EnsureAuth(ctx); err != nil {
-		return nil, err
-	}
-	return api.NewClient(""), nil
-}
-
 func resolveProjectName(override string) (string, error) {
 	if override != "" {
 		return override, nil
@@ -113,48 +106,43 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 	if a == "" {
 		a = "list"
 	}
+	// Ensure auth once and initialize user control-plane client once
+	if _, err := auth.EnsureAuth(ctx); err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	userID := os.Getenv("DATUM_USER_ID")
+	if userID == "" {
+		var err error
+		userID, err = authutil.GetSubject()
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("failed to determine user ID: %w", err)
+		}
+	}
+	ucli, err := api.NewUserControlPlaneClient(ctx, userID)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
 	switch a {
 	case "list":
-		c, err := ensureClient(ctx)
+		list, err := api.FetchList(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "")
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		userID := os.Getenv("DATUM_USER_ID")
-		if userID == "" {
-			userID, err = authutil.GetSubject()
-			if err != nil {
-				return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("failed to determine user ID: %w", err)
-			}
-		}
-		var out any
-		if err := c.ListOrganizationMemberships(ctx, userID, &out); err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
 	case "set":
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: name is required")
 		}
-		c, err := ensureClient(ctx)
+		memList, err := api.FetchList(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "")
 		if err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		userID := os.Getenv("DATUM_USER_ID")
-		if userID == "" {
-			userID, err = authutil.GetSubject()
-			if err != nil {
-				return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("failed to determine user ID: %w", err)
-			}
-		}
-		var memList resmanv1alpha1.OrganizationMembershipList
-		if err := c.ListOrganizationMemberships(ctx, userID, &memList); err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
 		allowed := false
 		for _, it := range memList.Items {
-			if strings.EqualFold(it.Spec.OrganizationRef.Name, name) {
+			orgName, _, _ := unstructured.NestedString(it.Object, "spec", "organizationRef", "name")
+			if strings.EqualFold(orgName, name) {
 				allowed = true
 				break
 			}
@@ -182,61 +170,48 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 // - {"action":"set","body":{"name":"project-1"}}
 // - {"action":"get"}
 func toolProjects(ctx context.Context, _ *mcp.CallToolRequest, in ProjectsInput) (*mcp.CallToolResult, any, error) {
-	a := strings.ToLower(in.Action)
+	a := strings.ToLower(strings.TrimSpace(in.Action))
+	if _, err := auth.EnsureAuth(ctx); err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	orgName, err := resolveOrgName(in.Org)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewOrgControlPlaneClient(ctx, orgName)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
 	switch a {
 	case "list":
-		c, err := ensureClient(ctx)
+		list, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "Project", "")
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		orgName, err := resolveOrgName(in.Org)
-		if err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		var out any
-		if err := c.ListProjects(ctx, orgName, &out); err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
 	case "create":
-		c, err := ensureClient(ctx)
-		if err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		orgName, err := resolveOrgName(in.Org)
-		if err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
 		if in.Body == nil {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: body is required for create")
 		}
-		var out any
-		if err := c.CreateProject(ctx, orgName, in.Body, &out); err != nil {
+		obj, err := api.CreateObject(ctx, cli, "resourcemanager.miloapis.com", "Project", "", in.Body)
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
 	case "set":
 		name, _ := in.Body["name"].(string)
 		if name == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: body.name is required")
 		}
-		c, err := ensureClient(ctx)
+		plist, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "Project", "")
 		if err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		orgName, err := resolveOrgName(in.Org)
-		if err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		var plist resmanv1alpha1.ProjectList
-		if err := c.ListProjects(ctx, orgName, &plist); err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
 		found := false
 		for _, it := range plist.Items {
-			if strings.EqualFold(it.Name, name) {
+			if strings.EqualFold(it.GetName(), name) {
 				found = true
 				break
 			}
@@ -263,22 +238,25 @@ func toolUsers(ctx context.Context, _ *mcp.CallToolRequest, in UsersInput) (*mcp
 	if a == "" {
 		a = "list"
 	}
+	if _, err := auth.EnsureAuth(ctx); err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	orgName, err := resolveOrgName(in.Org)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewOrgControlPlaneClient(ctx, orgName)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
 	switch a {
 	case "list":
-		c, err := ensureClient(ctx)
+		list, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "OrganizationMembership", "organization-"+orgName)
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		orgName, err := resolveOrgName(in.Org)
-		if err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		var out any
-		if err := c.ListOrgMemberships(ctx, orgName, &out); err != nil {
-			return &mcp.CallToolResult{IsError: true}, nil, err
-		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
 	default:
 		return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("unsupported users action: %s", in.Action)
 	}
@@ -292,52 +270,57 @@ func toolUsers(ctx context.Context, _ *mcp.CallToolRequest, in UsersInput) (*mcp
 // - {"action":"update","id":"domain-1","body":{...}}
 // - {"action":"delete","id":"domain-1"}
 func toolDomains(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
-	c, err := ensureClient(ctx)
-	if err != nil {
+	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return &mcp.CallToolResult{IsError: true}, nil, err
 	}
 	p, err := resolveProjectName(in.Project)
 	if err != nil {
 		return &mcp.CallToolResult{IsError: true}, nil, err
 	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
 	switch strings.ToLower(string(in.Action)) {
 	case string(ActionList):
-		var out any
-		if err := c.ListDomains(ctx, p, &out); err != nil {
+		list, err := api.FetchList(ctx, cli, "networking.datumapis.com", "Domain", "default")
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
 	case string(ActionGet):
 		if in.ID == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
 		}
-		var out any
-		if err := c.GetDomain(ctx, p, in.ID, &out); err != nil {
+		obj, err := api.FetchObject(ctx, cli, "networking.datumapis.com", "Domain", "default", in.ID)
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
 	case string(ActionCreate):
-		var out any
-		if err := c.CreateDomain(ctx, p, in.Body, &out); err != nil {
+		obj, err := api.CreateObject(ctx, cli, "networking.datumapis.com", "Domain", "default", in.Body)
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		return nil, out, nil
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
 	case string(ActionUpdate):
 		if in.ID == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
 		}
-		var out any
-		if err := c.UpdateDomain(ctx, p, in.ID, in.Body, &out); err != nil {
+		obj, err := api.UpdateObjectSpec(ctx, cli, "networking.datumapis.com", "Domain", "default", in.ID, in.Body)
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		return nil, out, nil
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
 	case string(ActionDelete):
 		if in.ID == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
 		}
-		if err := c.DeleteDomain(ctx, p, in.ID); err != nil {
+		if err := api.DeleteObject(ctx, cli, "networking.datumapis.com", "Domain", "default", in.ID); err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deleted"}}}, map[string]string{"deleted": in.ID}, nil
@@ -354,7 +337,7 @@ func toolDomains(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*
 // - {"action":"update","id":"proxy-1","body":{...}}
 // - {"action":"delete","id":"proxy-1"}
 func toolHTTPProxies(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
-	c, err := ensureClient(ctx)
+	_, err := auth.EnsureAuth(ctx)
 	if err != nil {
 		return &mcp.CallToolResult{IsError: true}, nil, err
 	}
@@ -362,44 +345,50 @@ func toolHTTPProxies(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput
 	if err != nil {
 		return &mcp.CallToolResult{IsError: true}, nil, err
 	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
 	switch strings.ToLower(string(in.Action)) {
 	case string(ActionList):
-		var out any
-		if err := c.ListHTTPProxies(ctx, p, &out); err != nil {
+		list, err := api.FetchList(ctx, cli, "networking.datumapis.com", "HTTPProxy", "default")
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
 	case string(ActionGet):
 		if in.ID == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
 		}
-		var out any
-		if err := c.GetHTTPProxy(ctx, p, in.ID, &out); err != nil {
+		obj, err := api.FetchObject(ctx, cli, "networking.datumapis.com", "HTTPProxy", "default", in.ID)
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, out, nil
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
 	case string(ActionCreate):
-		var out any
-		if err := c.CreateHTTPProxy(ctx, p, in.Body, &out); err != nil {
+		obj, err := api.CreateObject(ctx, cli, "networking.datumapis.com", "HTTPProxy", "default", in.Body)
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		return nil, out, nil
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
 	case string(ActionUpdate):
 		if in.ID == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
 		}
-		var out any
-		if err := c.UpdateHTTPProxy(ctx, p, in.ID, in.Body, &out); err != nil {
+		obj, err := api.UpdateObjectSpec(ctx, cli, "networking.datumapis.com", "HTTPProxy", "default", in.ID, in.Body)
+		if err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
-		return nil, out, nil
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
 	case string(ActionDelete):
 		if in.ID == "" {
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
 		}
-		if err := c.DeleteHTTPProxy(ctx, p, in.ID); err != nil {
+		if err := api.DeleteObject(ctx, cli, "networking.datumapis.com", "HTTPProxy", "default", in.ID); err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deleted"}}}, map[string]string{"deleted": in.ID}, nil
@@ -412,7 +401,7 @@ func toolHTTPProxies(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput
 // - {"action":"list","project":"proj"}
 // - {"action":"get","project":"proj","name":"domains"}
 func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mcp.CallToolResult, any, error) {
-	c, err := ensureClient(ctx)
+	_, err := auth.EnsureAuth(ctx)
 	if err != nil {
 		return &mcp.CallToolResult{IsError: true}, nil, err
 	}
@@ -427,7 +416,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 	switch a {
 	case "list":
 		var out any
-		if err := c.ListCRDs(ctx, p, &out); err != nil {
+		if err := api.ListResourceDefinitions(ctx, p, &out); err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
@@ -440,7 +429,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: group and version are required for get")
 		}
 		var out any
-		if err := c.GetCRDSchema(ctx, p, g, v, strings.TrimSpace(in.Kind), &out); err != nil {
+		if err := api.GetResourceDefinition(ctx, p, g, v, strings.TrimSpace(in.Kind), &out); err != nil {
 			return &mcp.CallToolResult{IsError: true}, nil, err
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
