@@ -34,6 +34,7 @@ build-target:
 build-all: clean
 	$(MAKE) build-target GOOS=darwin GOARCH=arm64
 	$(MAKE) build-target GOOS=darwin GOARCH=amd64
+    $(MAKE) build-target GOOS=linux GOARCH=arm64
 	$(MAKE) build-target GOOS=linux GOARCH=amd64
 	$(MAKE) build-target GOOS=windows GOARCH=amd64
 	$(MAKE) build-target GOOS=windows GOARCH=arm64
