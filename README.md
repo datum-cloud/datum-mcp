@@ -10,7 +10,7 @@
 
 # datum-mcp
 
-An MCP server for Datum Cloud with OAuth 2.1 (PKCE) auth, macOS Keychain token storage, and tools for listing/operating on organizations, projects, domains, HTTP proxies, and CRD schemas.
+A MCP server for Datum Cloud with OAuth 2.1 (PKCE) auth, macOS Keychain token storage, and tools for listing/operating on organizations, projects, domains, HTTP proxies, and CRD schemas.
 
 ## Installation
 
