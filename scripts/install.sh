@@ -112,14 +112,48 @@ case "$PLATFORM" in
     printf "%b\n" "${C_GREEN}${ICON_OK} Installed:${C_RESET} $dest_dir/datum-mcp.exe"
     ;;
   *)
-    # Choose a user-writable destination (no sudo)
+    # Always prefer /usr/local/bin for system-wide install; elevate if needed
     dest_dir=""
-    for d in "$HOME/.local/bin" "$HOME/bin"; do
-      if mkdir -p "$d" 2>/dev/null && [[ -w "$d" ]]; then dest_dir="$d"; break; fi
-    done
-    if [[ -z "$dest_dir" ]]; then dest_dir="$PWD"; fi
-    mv "$TMP" "$dest_dir/datum-mcp"
-    printf "%b\n" "${C_GREEN}${ICON_OK} Installed:${C_RESET} $dest_dir/datum-mcp"
+    target_system_dir="/usr/local/bin"
+
+    installed_system=""
+    # Try without sudo if writable
+    if mkdir -p "$target_system_dir" 2>/dev/null && [[ -w "$target_system_dir" ]]; then
+      mv "$TMP" "$target_system_dir/datum-mcp"
+      dest_dir="$target_system_dir"
+      installed_system=1
+    else
+      # Try with sudo, prompting for password if needed
+      if command -v sudo >/dev/null 2>&1; then
+        printf "%b\n" "${C_CYAN}${ICON_INFO} Elevation required to install to ${target_system_dir}. You may be prompted for your password.${C_RESET}"
+        if ( sudo mkdir -p "$target_system_dir" && sudo mv "$TMP" "$target_system_dir/datum-mcp" && sudo chmod +x "$target_system_dir/datum-mcp" ); then
+          dest_dir="$target_system_dir"
+          installed_system=1
+        fi
+      fi
+    fi
+
+    if [[ -n "$installed_system" ]]; then
+      printf "%b\n" "${C_GREEN}${ICON_OK} Installed:${C_RESET} $dest_dir/datum-mcp"
+    else
+      # Fall back to user-writable locations (no sudo)
+      for d in "$HOME/.local/bin" "$HOME/bin"; do
+        if mkdir -p "$d" 2>/dev/null && [[ -w "$d" ]]; then dest_dir="$d"; break; fi
+      done
+      if [[ -z "$dest_dir" ]]; then dest_dir="$PWD"; fi
+      mv "$TMP" "$dest_dir/datum-mcp"
+      printf "%b\n" "${C_GREEN}${ICON_OK} Installed:${C_RESET} $dest_dir/datum-mcp"
+      if [[ "$dest_dir" != "$target_system_dir" ]]; then
+        printf "%b\n" "${C_YELLOW}${ICON_WARN} Could not install to ${target_system_dir}.${C_RESET}"
+        if command -v sudo >/dev/null 2>&1; then
+          printf "%b\n" "  To move it system-wide later, run:"
+          printf "%b\n" "    ${C_DIM}sudo mv '$dest_dir/datum-mcp' '$target_system_dir/datum-mcp'${C_RESET}"
+        else
+          printf "%b\n" "  'sudo' not found. Move manually with sufficient privileges to a PATH dir, e.g.:"
+          printf "%b\n" "    ${C_DIM}mv '$dest_dir/datum-mcp' '/usr/local/bin/datum-mcp'${C_RESET}"
+        fi
+      fi
+    fi
     ;;
 esac
 
