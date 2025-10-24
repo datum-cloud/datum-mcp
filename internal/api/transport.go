@@ -1,9 +1,6 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
@@ -47,29 +44,6 @@ func (a *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 		if tkn2, err2 := auth.EnsureAuth(r2.Context()); err2 == nil && tkn2 != "" {
 			r2.Header.Set("Authorization", "Bearer "+tkn2)
 			return a.next.RoundTrip(r2)
-		}
-	}
-	// Retry on OIDC refresh invalid even if status isn't 401/403, but only inspect non-2xx bodies.
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.Body != nil {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			// Restore full body so downstream decoders don't see EOF
-			resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			var buf struct {
-				ErrorDescription string `json:"error_description"`
-			}
-			_ = json.Unmarshal(bodyBytes, &buf)
-			// Detect via JSON field or raw substring
-			if strings.Contains(buf.ErrorDescription, "Errors.OIDCSession.RefreshTokenInvalid") ||
-				(len(bodyBytes) > 0 && strings.Contains(string(bodyBytes), "Errors.OIDCSession.RefreshTokenInvalid")) {
-				_ = resp.Body.Close()
-				r2 := r.Clone(r.Context())
-				_ = auth.RunLoginFlow(r2.Context(), false)
-				if tkn2, err2 := auth.EnsureAuth(r2.Context()); err2 == nil && tkn2 != "" {
-					r2.Header.Set("Authorization", "Bearer "+tkn2)
-					return a.next.RoundTrip(r2)
-				}
-			}
 		}
 	}
 	return resp, nil
