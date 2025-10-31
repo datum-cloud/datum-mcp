@@ -26,10 +26,9 @@ curl -fsSL https://github.com/datum-cloud/datum-mcp/releases/latest/download/ins
     - Windows: `datum-mcp_windows_amd64.exe` (and optionally `windows_arm64`)
   - Rename to `datum-mcp` (or `datum-mcp.exe` on Windows) and place it somewhere on your PATH.
 
-Generic MCP Config:
+MCP client config in Claude desktop and Claude:
 
-Add this to your MCP client config to run the server via stdio:
-
+Mode: stdio
 ```json
 {
   "datum-mcp": {
@@ -38,8 +37,26 @@ Add this to your MCP client config to run the server via stdio:
   }
 }
 ```
+Mode: streamable http
 
-(Optionally) Add to Cursor (macOS/Linux):
+Add this to your MCP client config to run the server ( eg on port 9099):
+
+ ```json
+ "datumMcp": {
+      "command": "datum-mcp",
+      "args":[ 
+               "--mode",
+               "http",
+               "--host", 
+               "localhost",
+               "--port",
+               "9099"
+             ]   
+}
+```
+
+
+Cursor config in stdio mode (macOS/Linux):
 
 [![Install MCP Server](https://cursor.com/deeplink/mcp-install-light.svg)](https://cursor.com/en-US/install-mcp?name=datum-mcp&config=eyJ0eXBlIjoic3RkaW8iLCJlbnYiOnt9LCJjb21tYW5kIjoiL3Vzci9sb2NhbC9iaW4vZGF0dW0tbWNwICJ9)
 
@@ -78,7 +95,7 @@ go build ./cmd/datum-mcp
 - `DATUM_ORG` (active organization for project listing)
 
 ## Register with your MCP client
-The binary speaks MCP over stdio. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
+The binary speaks MCP over stdio or streamable http. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
 
 ## Run modes
 - Stdio (default):
