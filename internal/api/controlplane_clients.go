@@ -20,6 +20,7 @@ import (
 
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/datum-cloud/datum-mcp/internal/auth"
 	"github.com/datum-cloud/datum-mcp/internal/authutil"
 )
 
@@ -28,15 +29,17 @@ var (
 	sharedMapperMu sync.Mutex
 )
 
-func newPrefixedClient(ctx context.Context, basePrefix string, bearer string) (ctrlclient.Client, error) {
+func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Client, error) {
+	if _, err := auth.EnsureAuth(ctx); err != nil {
+		return nil, err
+	}
 	apiHost, err := authutil.GetAPIHostname()
 	if err != nil {
 		return nil, err
 	}
 
 	cfg := &rest.Config{
-		Host:        "https://" + strings.TrimRight(apiHost, "/"),
-		BearerToken: bearer,
+		Host: "https://" + strings.TrimRight(apiHost, "/"),
 		// WrapTransport to prefix base path
 		WrapTransport: func(rt http.RoundTripper) http.RoundTripper {
 			if rt == nil {
@@ -100,55 +103,28 @@ func safeHostComponent(host string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
 }
 
-func bearerFromKeychain(ctx context.Context) (string, error) {
-	ts, err := authutil.GetTokenSource(ctx)
-	if err != nil {
-		return "", err
-	}
-	t, err := ts.Token()
-	if err != nil {
-		return "", err
-	}
-	if t == nil || t.AccessToken == "" {
-		return "", fmt.Errorf("empty access token")
-	}
-	return t.AccessToken, nil
-}
-
 func NewUserControlPlaneClient(ctx context.Context, userID string) (ctrlclient.Client, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("userID is required")
 	}
-	bearer, err := bearerFromKeychain(ctx)
-	if err != nil {
-		return nil, err
-	}
 	base := "/apis/iam.miloapis.com/v1alpha1/users/" + userID + "/control-plane"
-	return newPrefixedClient(ctx, base, bearer)
+	return newPrefixedClient(ctx, base)
 }
 
 func NewOrgControlPlaneClient(ctx context.Context, org string) (ctrlclient.Client, error) {
 	if org == "" {
 		return nil, fmt.Errorf("organization is required")
 	}
-	bearer, err := bearerFromKeychain(ctx)
-	if err != nil {
-		return nil, err
-	}
 	base := "/apis/resourcemanager.miloapis.com/v1alpha1/organizations/" + org + "/control-plane"
-	return newPrefixedClient(ctx, base, bearer)
+	return newPrefixedClient(ctx, base)
 }
 
 func NewProjectControlPlaneClient(ctx context.Context, project string) (ctrlclient.Client, error) {
 	if project == "" {
 		return nil, fmt.Errorf("project is required")
 	}
-	bearer, err := bearerFromKeychain(ctx)
-	if err != nil {
-		return nil, err
-	}
 	base := "/apis/resourcemanager.miloapis.com/v1alpha1/projects/" + project + "/control-plane"
-	return newPrefixedClient(ctx, base, bearer)
+	return newPrefixedClient(ctx, base)
 }
 
 // NewProjectHTTPClient returns an HTTP client whose transport injects Authorization and the
