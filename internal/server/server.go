@@ -396,6 +396,198 @@ func toolHTTPProxies(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput
 	}
 }
 
+// HTTP Routes tool supports: list|get|create|update|delete
+// Group/Kind follows Gateway API: gateway.networking.k8s.io/HTTPRoute
+func toolHTTPRoutes(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	_, err := auth.EnsureAuth(ctx)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	p, err := resolveProjectName(in.Project)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	switch strings.ToLower(string(in.Action)) {
+	case string(ActionList):
+		list, err := api.FetchList(ctx, cli, "gateway.networking.k8s.io", "HTTPRoute", "default")
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
+	case string(ActionGet):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.FetchObject(ctx, cli, "gateway.networking.k8s.io", "HTTPRoute", "default", in.ID)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionCreate):
+		obj, err := api.CreateObject(ctx, cli, "gateway.networking.k8s.io", "HTTPRoute", "default", in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionUpdate):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.UpdateObjectSpec(ctx, cli, "gateway.networking.k8s.io", "HTTPRoute", "default", in.ID, in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionDelete):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		if err := api.DeleteObject(ctx, cli, "gateway.networking.k8s.io", "HTTPRoute", "default", in.ID); err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deleted"}}}, map[string]string{"deleted": in.ID}, nil
+	default:
+		return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("unsupported httproutes action: %s", in.Action)
+	}
+}
+
+// Gateways tool supports: list|get|create|update|delete
+// Group/Kind follows Gateway API: gateway.networking.k8s.io/Gateway
+func toolGateways(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	_, err := auth.EnsureAuth(ctx)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	p, err := resolveProjectName(in.Project)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	switch strings.ToLower(string(in.Action)) {
+	case string(ActionList):
+		list, err := api.FetchList(ctx, cli, "gateway.networking.k8s.io", "Gateway", "default")
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
+	case string(ActionGet):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.FetchObject(ctx, cli, "gateway.networking.k8s.io", "Gateway", "default", in.ID)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionCreate):
+		obj, err := api.CreateObject(ctx, cli, "gateway.networking.k8s.io", "Gateway", "default", in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionUpdate):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.UpdateObjectSpec(ctx, cli, "gateway.networking.k8s.io", "Gateway", "default", in.ID, in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionDelete):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		if err := api.DeleteObject(ctx, cli, "gateway.networking.k8s.io", "Gateway", "default", in.ID); err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deleted"}}}, map[string]string{"deleted": in.ID}, nil
+	default:
+		return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("unsupported gateways action: %s", in.Action)
+	}
+}
+
+// TrafficProtectionPolicies tool supports: list|get|create|update|delete
+// Group is assumed to be networking.datumapis.com with kind TrafficProtectionPolicy.
+// Policies are intended to be attached to Gateways or HTTPRoutes.
+func toolTrafficProtectionPolicies(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	_, err := auth.EnsureAuth(ctx)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	p, err := resolveProjectName(in.Project)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	const group = "networking.datumapis.com"
+	const kind = "TrafficProtectionPolicy"
+	switch strings.ToLower(string(in.Action)) {
+	case string(ActionList):
+		list, err := api.FetchList(ctx, cli, group, kind, "default")
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
+	case string(ActionGet):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.FetchObject(ctx, cli, group, kind, "default", in.ID)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionCreate):
+		obj, err := api.CreateObject(ctx, cli, group, kind, "default", in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionUpdate):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.UpdateObjectSpec(ctx, cli, group, kind, "default", in.ID, in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionDelete):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		if err := api.DeleteObject(ctx, cli, group, kind, "default", in.ID); err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deleted"}}}, map[string]string{"deleted": in.ID}, nil
+	default:
+		return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("unsupported trafficprotectionpolicies action: %s", in.Action)
+	}
+}
+
 // APIs tool: list/get CRDs under the project control-plane.
 // - {"action":"list","project":"proj"}
 // - {"action":"get","project":"proj","name":"domains"}
@@ -446,6 +638,9 @@ func NewMCPServer() *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "users", Description: "List users under the active org or 'org'. Actions: list."}, toolUsers)
 	mcp.AddTool(s, &mcp.Tool{Name: "domains", Description: "CRUD for domains. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolDomains)
 	mcp.AddTool(s, &mcp.Tool{Name: "httpproxies", Description: "CRUD for HTTP proxies. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolHTTPProxies)
+	mcp.AddTool(s, &mcp.Tool{Name: "httproutes", Description: "CRUD for HTTP routes. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolHTTPRoutes)
+	mcp.AddTool(s, &mcp.Tool{Name: "gateways", Description: "CRUD for Gateways. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolGateways)
+	mcp.AddTool(s, &mcp.Tool{Name: "trafficprotectionpolicies", Description: "CRUD for TrafficProtectionPolicies. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update). Policies apply to Gateways or HTTPRoutes."}, toolTrafficProtectionPolicies)
 	mcp.AddTool(s, &mcp.Tool{Name: "apis", Description: "List/get CRDs under the current project. Actions: list|get. Fields: project (optional), name (for get)."}, toolAPIs)
 	return s
 }
