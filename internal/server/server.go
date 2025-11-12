@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -454,7 +453,6 @@ func NewMCPServer() *mcp.Server {
 // Run starts the server over stdio (default transport).
 func Run(ctx context.Context) error {
 	s := NewMCPServer()
-	log.Printf("datum-mcp running (stdio)")
 	return s.Run(ctx, &mcp.StdioTransport{})
 }
 
@@ -462,6 +460,5 @@ func Run(ctx context.Context) error {
 func RunHTTP(ctx context.Context, addr string) error {
 	s := NewMCPServer()
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return s }, nil)
-	log.Printf("datum-mcp listening (http) on %s", addr)
 	return http.ListenAndServe(addr, handler)
 }
