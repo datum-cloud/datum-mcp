@@ -10,7 +10,7 @@
 
 # datum-mcp
 
-An MCP server for Datum Cloud with OAuth 2.1 (PKCE) auth, macOS Keychain token storage, and tools for listing/operating on organizations, projects, domains, HTTP proxies, and CRD schemas.
+An MCP server for Datum Cloud with OAuth 2.1 (PKCE) auth, macOS Keychain token storage, and tools for listing/operating on organizations, projects, domains, HTTP proxies, HTTP routes, gateways, traffic protection policies, and CRD schemas.
 
 ## Installation
 
@@ -153,6 +153,19 @@ All tools accept JSON inputs and return both structured content and a pretty-pri
 - httpproxies
   - Same shape and behavior as `domains` (namespaced list/get/create/update; delete by name).
 
+- httproutes
+  - Same shape and behavior as `domains` (namespaced list/get/create/update; delete by name).
+  - Targets Gateway API HTTPRoute resources.
+
+- gateways
+  - Same shape and behavior as `domains` (namespaced list/get/create/update; delete by name).
+  - Targets Gateway API Gateway resources.
+
+- trafficprotectionpolicies
+  - Same shape and behavior as `domains` (namespaced list/get/create/update; delete by name).
+  - Policies are intended to target either `Gateway` or `HTTPRoute` resources.
+  - Group/kind: `networking.datumapis.com` / `TrafficProtectionPolicy`.
+
 - apis (CRDs list/describe via upstream OpenAPI/`kubectl explain` logic)
   - **Actions**: `list` | `get`
   - **Input**:
@@ -167,5 +180,5 @@ All tools accept JSON inputs and return both structured content and a pretty-pri
 2. `organizations` → set active org
 3. `projects` → list for an org
 4. `projects` → set active project
-5. Use `domains` / `httpproxies` for CRUD, or `apis` to inspect CRD schemas
+5. Use `domains` / `httpproxies` / `httproutes` / `gateways` / `trafficprotectionpolicies` for CRUD, or `apis` to inspect CRD schemas
 
