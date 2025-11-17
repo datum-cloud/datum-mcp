@@ -37,24 +37,6 @@ Mode: stdio
   }
 }
 ```
-Mode: streamable http
-
-Add this to your MCP client config to run the server ( eg on port 9099):
-
- ```json
- "datumMcp": {
-      "command": "datum-mcp",
-      "args":[ 
-               "--mode",
-               "http",
-               "--host", 
-               "localhost",
-               "--port",
-               "9099"
-             ]   
-}
-```
-
 
 Cursor config in stdio mode (macOS/Linux):
 
@@ -98,20 +80,10 @@ go build ./cmd/datum-mcp
 The binary speaks MCP over stdio or streamable http. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
 
 ## Run modes
-- Stdio (default):
+- Stdio (http coming soon):
 ```bash
 datum-mcp
 ```
-
-- HTTP server:
-```bash
-datum-mcp --mode http --host localhost --port 9000
-```
-
-Flags:
-- `--mode` one of `stdio` (default) or `http`
-- `--host` interface to bind in HTTP mode (default `localhost`)
-- `--port` port to bind in HTTP mode (default `9000`)
 
 ## Tools
 All tools accept JSON inputs and return both structured content and a pretty-printed text block for UIs that show text only.
