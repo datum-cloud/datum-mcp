@@ -10,7 +10,7 @@
 
 # datum-mcp
 
-An MCP server for Datum Cloud with OAuth 2.1 (PKCE) auth, macOS Keychain token storage, and tools for listing/operating on organizations, projects, domains, HTTP proxies, HTTP routes, gateways, traffic protection policies, and CRD schemas.
+An MCP server for Datum Cloud with OAuth 2.1 (PKCE) auth, macOS Keychain token storage, and tools for listing/operating on organizations, projects, domains, HTTP proxies, HTTP routes, gateways, traffic protection policies, DNS zones/records, and CRD schemas.
 
 ## Installation
 
@@ -138,6 +138,38 @@ All tools accept JSON inputs and return both structured content and a pretty-pri
   - Policies are intended to target either `Gateway` or `HTTPRoute` resources.
   - Group/kind: `networking.datumapis.com` / `TrafficProtectionPolicy`.
 
+- dnszones
+  - **Actions**: `list` | `get` | `create` | `update` | `delete`
+  - **Input**:
+    - List: `{ "action": "list", "project": "<optional>" }`
+    - Get: `{ "action": "get", "id": "<name>", "project": "<optional>" }`
+    - Create: `{ "action": "create", "body": { ... }, "project": "<optional>" }`
+    - Update: `{ "action": "update", "id": "<name>", "body": { ... }, "project": "<optional>" }`
+    - Delete: `{ "action": "delete", "id": "<name>", "project": "<optional>" }`
+  - **Project resolution**: `project` input, else active project (from `projects set`).
+  - **Namespace**: operates in namespace `default`.
+  - **Group/kind**: `dns.networking.miloapis.com` / `DNSZone`.
+
+- dnsrecordsets
+  - **Actions**: `list` | `get` | `create` | `update` | `delete`
+  - **Input**:
+    - List: `{ "action": "list", "project": "<optional>" }`
+    - Get: `{ "action": "get", "id": "<name>", "project": "<optional>" }`
+    - Create: `{ "action": "create", "body": { ... }, "project": "<optional>" }`
+    - Update: `{ "action": "update", "id": "<name>", "body": { ... }, "project": "<optional>" }`
+    - Delete: `{ "action": "delete", "id": "<name>", "project": "<optional>" }`
+  - **Project resolution**: `project` input, else active project (from `projects set`).
+  - **Namespace**: operates in namespace `default`.
+  - **Group/kind**: `dns.networking.miloapis.com` / `DNSRecordSet`.
+
+- dnszoneclasses
+  - **Actions**: `list` | `get`
+  - **Input**:
+    - List: `{ "action": "list", "project": "<optional>" }`
+    - Get: `{ "action": "get", "id": "<name>", "project": "<optional>" }`
+  - **Scope**: cluster-scoped (no namespace).
+  - **Group/kind**: `dns.networking.miloapis.com` / `DNSZoneClass`.
+
 - apis (CRDs list/describe via upstream OpenAPI/`kubectl explain` logic)
   - **Actions**: `list` | `get`
   - **Input**:
@@ -152,5 +184,5 @@ All tools accept JSON inputs and return both structured content and a pretty-pri
 2. `organizations` → set active org
 3. `projects` → list for an org
 4. `projects` → set active project
-5. Use `domains` / `httpproxies` / `httproutes` / `gateways` / `trafficprotectionpolicies` for CRUD, or `apis` to inspect CRD schemas
+5. Use `domains` / `httpproxies` / `httproutes` / `gateways` / `trafficprotectionpolicies` / `dnszones` / `dnsrecordsets` / `dnszoneclasses` for CRUD/list/get, or `apis` to inspect CRD schemas
 
