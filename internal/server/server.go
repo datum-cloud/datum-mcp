@@ -588,6 +588,178 @@ func toolTrafficProtectionPolicies(ctx context.Context, _ *mcp.CallToolRequest, 
 	}
 }
 
+// DNSZones tool supports: list|get|create|update|delete
+// Group/Kind: dns.networking.miloapis.com/DNSZone (namespaced)
+func toolDNSZones(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	_, err := auth.EnsureAuth(ctx)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	p, err := resolveProjectName(in.Project)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	const group = "dns.networking.miloapis.com"
+	const kind = "DNSZone"
+	const namespace = "default"
+	switch strings.ToLower(string(in.Action)) {
+	case string(ActionList):
+		list, err := api.FetchList(ctx, cli, group, kind, namespace)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
+	case string(ActionGet):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.FetchObject(ctx, cli, group, kind, namespace, in.ID)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionCreate):
+		obj, err := api.CreateObject(ctx, cli, group, kind, namespace, in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionUpdate):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.UpdateObjectSpec(ctx, cli, group, kind, namespace, in.ID, in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionDelete):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		if err := api.DeleteObject(ctx, cli, group, kind, namespace, in.ID); err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deleted"}}}, map[string]string{"deleted": in.ID}, nil
+	default:
+		return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("unsupported dnszones action: %s", in.Action)
+	}
+}
+
+// DNSRecordSets tool supports: list|get|create|update|delete
+// Group/Kind: dns.networking.miloapis.com/DNSRecordSet (namespaced)
+func toolDNSRecordSets(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	_, err := auth.EnsureAuth(ctx)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	p, err := resolveProjectName(in.Project)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	const group = "dns.networking.miloapis.com"
+	const kind = "DNSRecordSet"
+	const namespace = "default"
+	switch strings.ToLower(string(in.Action)) {
+	case string(ActionList):
+		list, err := api.FetchList(ctx, cli, group, kind, namespace)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
+	case string(ActionGet):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.FetchObject(ctx, cli, group, kind, namespace, in.ID)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionCreate):
+		obj, err := api.CreateObject(ctx, cli, group, kind, namespace, in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionUpdate):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.UpdateObjectSpec(ctx, cli, group, kind, namespace, in.ID, in.Body)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	case string(ActionDelete):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		if err := api.DeleteObject(ctx, cli, group, kind, namespace, in.ID); err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deleted"}}}, map[string]string{"deleted": in.ID}, nil
+	default:
+		return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("unsupported dnsrecordsets action: %s", in.Action)
+	}
+}
+
+// DNSZoneClasses tool supports: list|get (cluster-scoped)
+// Group/Kind: dns.networking.miloapis.com/DNSZoneClass (cluster-scoped)
+func toolDNSZoneClasses(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	_, err := auth.EnsureAuth(ctx)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	p, err := resolveProjectName(in.Project)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	cli, err := api.NewProjectControlPlaneClient(ctx, p)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, nil, err
+	}
+	const group = "dns.networking.miloapis.com"
+	const kind = "DNSZoneClass"
+	switch strings.ToLower(string(in.Action)) {
+	case string(ActionList):
+		list, err := api.FetchList(ctx, cli, group, kind, "")
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(list, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, list, nil
+	case string(ActionGet):
+		if in.ID == "" {
+			return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("invalid params: id is required")
+		}
+		obj, err := api.FetchObject(ctx, cli, group, kind, "", in.ID)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true}, nil, err
+		}
+		b, _ := json.MarshalIndent(obj, "", "  ")
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, obj, nil
+	default:
+		return &mcp.CallToolResult{IsError: true}, nil, fmt.Errorf("unsupported dnszoneclasses action: %s", in.Action)
+	}
+}
+
 // APIs tool: list/get CRDs under the project control-plane.
 // - {"action":"list","project":"proj"}
 // - {"action":"get","project":"proj","name":"domains"}
@@ -632,7 +804,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.1.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.1.4"}, nil)
 	mcp.AddTool(s, &mcp.Tool{Name: "organizations", Description: "Manage organization context. Actions: list|get|set (name)."}, toolOrganizationMemberships)
 	mcp.AddTool(s, &mcp.Tool{Name: "projects", Description: "Manage projects. Actions: list|get|create|set. list/create require active org or 'org'; set uses body.name."}, toolProjects)
 	mcp.AddTool(s, &mcp.Tool{Name: "users", Description: "List users under the active org or 'org'. Actions: list."}, toolUsers)
@@ -641,6 +813,9 @@ func NewMCPServer() *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "httproutes", Description: "CRUD for HTTP routes. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolHTTPRoutes)
 	mcp.AddTool(s, &mcp.Tool{Name: "gateways", Description: "CRUD for Gateways. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolGateways)
 	mcp.AddTool(s, &mcp.Tool{Name: "trafficprotectionpolicies", Description: "CRUD for TrafficProtectionPolicies. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update). Policies apply to Gateways or HTTPRoutes."}, toolTrafficProtectionPolicies)
+	mcp.AddTool(s, &mcp.Tool{Name: "dnszones", Description: "CRUD for DNSZones. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolDNSZones)
+	mcp.AddTool(s, &mcp.Tool{Name: "dnsrecordsets", Description: "CRUD for DNSRecordSets. Actions: list|get|create|update|delete. Fields: project (optional), id (for get/update/delete), body (for create/update)."}, toolDNSRecordSets)
+	mcp.AddTool(s, &mcp.Tool{Name: "dnszoneclasses", Description: "List/get DNSZoneClasses (cluster-scoped). Actions: list|get. Fields: project (optional), id (for get)."}, toolDNSZoneClasses)
 	mcp.AddTool(s, &mcp.Tool{Name: "apis", Description: "List/get CRDs under the current project. Actions: list|get. Fields: project (optional), name (for get)."}, toolAPIs)
 	return s
 }
