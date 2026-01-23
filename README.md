@@ -1,5 +1,6 @@
 <p align="center">
-  <img width="60px" src="assets/logo.png">
+ 
+  <img width="500" height="99" alt="Datum Logo" src="https://github.com/user-attachments/assets/c57d4f38-da4e-466b-9e77-dd862d72578d" />
   
   <h1 align="center">Datum MCP Server</h1>
   
