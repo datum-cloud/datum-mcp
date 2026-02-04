@@ -9,7 +9,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v0.3.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.9.1
-	github.com/zalando/go-keyring v0.2.4
+	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/oauth2 v0.30.0
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
@@ -17,8 +17,9 @@ require (
 )
 
 require (
+	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	github.com/alessio/shellescape v1.4.1 // indirect
-	github.com/danieljoos/wincred v1.2.0 // indirect
+	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
