@@ -2,7 +2,7 @@ module github.com/datum-cloud/datum-mcp
 
 go 1.24.7
 
-toolchain go1.25.6
+toolchain go1.25.7
 
 require (
 	github.com/coreos/go-oidc/v3 v3.10.0
