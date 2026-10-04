@@ -89,12 +89,20 @@ datum-mcp
 ## Tools
 All tools accept JSON inputs and return both structured content and a pretty-printed text block for UIs that show text only.
 
-- organizationmemberships
+### Response and error format
+- **Successful list responses** are returned as `{ "items": [...], "count": N }`, not a raw Kubernetes list.
+- **Successful get/create/update responses** return the resource with internal-only Kubernetes metadata stripped
+  (`managedFields`, `resourceVersion`, `uid`, `generation`, `creationTimestamp`, `selfLink`). `spec`, `status`, `name`,
+  `namespace`, `labels`, and `annotations` are preserved in full.
+- **Errors** are returned as structured JSON, not a plain-text message: `{ "error": "...", "suggested_action": { "tool": "...", "action": "...", "args": {...} } }`.
+  `suggested_action` is populated whenever there's a clear recovery step (e.g. no active project/organization set).
+
+- organizations
   - **Actions**: `list` | `get` | `set`
   - **Input**:
     - List memberships for current user: `{ "action": "list" }`
     - Get active organization: `{ "action": "get" }`
-    - Set active organization (verifies membership): `{ "action": "set", "body": { "name": "<org-id>" } }`
+    - Set active organization (verifies membership): `{ "action": "set", "name": "<org-id>" }`
   - **User resolution**: `DATUM_USER_ID` env, else subject from stored credentials.
 
 - users
@@ -175,10 +183,11 @@ All tools accept JSON inputs and return both structured content and a pretty-pri
   - **Actions**: `list` | `get`
   - **Input**:
     - List groups/versions and resources: `{ "action": "list", "project": "<optional>" }`
-    - Get a schema for a specific kind: `{ "action": "get", "group": "<group>", "version": "<version>", "kind": "<Kind>", "project": "<optional>" }`
+    - Get a schema for a specific kind: `{ "action": "get", "group": "<group>", "version": "<version>", "kind": "<Kind>", "project": "<optional>", "detail": "<optional>" }`
   - **Behavior**:
     - `list` reads the project control-plane OpenAPI v3 index and returns groups, versions, and resources with `name`, `kind`, and `namespaced`.
-    - `get` fetches the OpenAPI v3 document for the given group/version and returns the full upstream-rendered schema for the requested kind (no custom trimming).
+    - `get` fetches the OpenAPI v3 document for the given group/version and returns the full upstream-rendered schema for the requested kind.
+    - `detail: "structure"` returns a condensed shape (types/properties/required/items only) instead of the full schema, to save context. Default is the full schema.
 
 ## Recommended workflow
 1. `organizations` → list orgs

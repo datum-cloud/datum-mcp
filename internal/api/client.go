@@ -118,7 +118,10 @@ func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, names
 }
 
 // Discovery: CRD schema via OpenAPI v3 direct path: /openapi/v3/apis/<group>/<version>[/<kind>]
-func GetResourceDefinition(ctx context.Context, project, group, version, kind string, out any) error {
+// When structureOnly is true, the schema is reduced to its structural shape
+// (types, properties, required, items, additionalProperties, oneOf/anyOf/allOf)
+// to save context; descriptions, formats, and examples are dropped.
+func GetResourceDefinition(ctx context.Context, project, group, version, kind string, structureOnly bool, out any) error {
 	httpClient, host, err := NewProjectHTTPClient(ctx, project)
 	if err != nil {
 		return err
@@ -166,6 +169,9 @@ func GetResourceDefinition(ctx context.Context, project, group, version, kind st
 							vStr, _ := em["version"].(string)
 							kStr, _ := em["kind"].(string)
 							if strings.EqualFold(gStr, strings.Trim(group, ".")) && strings.EqualFold(vStr, strings.Trim(version, ".")) && strings.EqualFold(kStr, k) {
+								if structureOnly {
+									return assignJSON(out, trimToStructure(sm))
+								}
 								return assignJSON(out, sm)
 							}
 						}
@@ -173,6 +179,9 @@ func GetResourceDefinition(ctx context.Context, project, group, version, kind st
 				}
 			}
 		}
+	}
+	if structureOnly {
+		return assignJSON(out, trimToStructure(doc))
 	}
 	return assignJSON(out, doc)
 }
