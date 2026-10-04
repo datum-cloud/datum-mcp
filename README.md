@@ -90,15 +90,31 @@ datum-mcp
 All tools accept JSON inputs and return both structured content and a pretty-printed text block for UIs that show text only.
 
 ### Response and error format
-- **Successful list responses** are returned as `{ "items": [...], "count": N }`, not a raw Kubernetes list.
+- **Successful list responses** are returned as `{ "items": [...], "count": N, "continue": "..." }`, not a raw Kubernetes
+  list. `continue` is `""` when there are no more pages.
 - **Successful get/create/update responses** return the resource with internal-only Kubernetes metadata stripped
   (`managedFields`, `generation`, `creationTimestamp`, `selfLink`). `uid` and `resourceVersion` are preserved: `uid` is
   how an agent references the object elsewhere, and `resourceVersion` is the concurrency token to round-trip into a
-  later update/delete. `spec`, `status`, `name`, `namespace`, `labels`, and `annotations` are preserved in full.
+  later update/delete (see below). `spec`, `status`, `name`, `namespace`, `labels`, and `annotations` are preserved in full.
 - **Update** deep-merges `body.spec` into the existing spec field-by-field: a null field deletes it, nested objects
   merge recursively, and arrays/scalars replace wholesale. Fields omitted from `body.spec` are left untouched.
 - **Errors** are returned as structured JSON, not a plain-text message: `{ "error": "...", "suggested_action": { "tool": "...", "action": "...", "args": {...} } }`.
-  `suggested_action` is populated whenever there's a clear recovery step (e.g. no active project/organization set).
+  `suggested_action` is populated whenever there's a clear recovery step (e.g. no active project/organization set, or a
+  resourceVersion conflict).
+
+### List pagination and filtering
+Every tool's `list` action accepts:
+- `limit` — max items per page (default 100, clamped to 500; there's no "list everything" mode, follow `continue` instead).
+- `continue` — the `continue` token from a previous `list` response, to fetch the next page.
+- `labelSelector` — kubectl-style, e.g. `"team=edge,env!=prod"`.
+- `fieldSelector` — kubectl-style, e.g. `"metadata.name=foo"`; only fields the resource registers as selectable are supported server-side.
+
+### Dry-run and optimistic concurrency (CRD-backed resource tools, and `projects` create)
+- `dryRun: true` on `create`/`update`/`delete` validates and runs admission server-side without persisting the change;
+  the response is tagged `"dryRun": true`.
+- `resourceVersion: "<value from a prior get>"` on `update`/`delete` enables optimistic concurrency: if the resource
+  changed since that `resourceVersion` was read, the call fails with a conflict error (`suggested_action` points back
+  at `get`) instead of silently overwriting the newer state. Omit it to keep the previous last-write-wins behavior.
 
 - organizations
   - **Actions**: `list` | `get` | `set`
@@ -192,10 +208,27 @@ All tools accept JSON inputs and return both structured content and a pretty-pri
     - `get` fetches the OpenAPI v3 document for the given group/version and returns the full upstream-rendered schema for the requested kind.
     - `detail: "structure"` returns a condensed shape (types/properties/required/items only) instead of the full schema, to save context. Default is the full schema.
 
+- context
+  - **Actions**: none — call with `{}`.
+  - **Behavior**: a stateless discovery snapshot, not session memory. Returns `authenticated`, `active_organization`,
+    `active_project`, the organizations/projects you can reach, and a `next_step` with the exact next tool call to make
+    (`null` once an active project is set). Doesn't trigger the OAuth login flow itself — call any other tool to do that
+    if `authenticated` is `false`.
+
+## Prompts
+In addition to tools, the server exposes MCP prompts for common multi-step workflows. Clients that support `prompts/list`
+and `prompts/get` can surface these directly:
+
+- `deploy-http-proxy` (`backend_service`, `backend_port`, optional `path_prefix`) — expose a backend `NetworkService` via
+  an `HTTPProxy`, which auto-provisions its own `Gateway` and `HTTPRoute`.
+- `configure-dns` (`domain_name`) — create a managed `DNSZone`, which auto-provisions its default NS `DNSRecordSet`, plus
+  how to add further records.
+- `onboard-to-project` (no arguments) — loop on the `context` tool until an active organization and project are set.
+
 ## Recommended workflow
-1. `organizations` → list orgs
-2. `organizations` → set active org
-3. `projects` → list for an org
-4. `projects` → set active project
+1. `context` → check what's already set up (or jump straight to step 5 if `next_step` is already `null`)
+2. `organizations` → list orgs, then set active org
+3. `projects` → list for an org, then set active project
+4. `context` → confirm `next_step` is `null` (or just use the `onboard-to-project` prompt for steps 1-4)
 5. Use `domains` / `httpproxies` / `httproutes` / `gateways` / `trafficprotectionpolicies` / `dnszones` / `dnsrecordsets` / `dnszoneclasses` for CRUD/list/get, or `apis` to inspect CRD schemas
 

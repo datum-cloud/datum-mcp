@@ -44,16 +44,15 @@ func TestCleanObjectStripsInternalMetadata(t *testing.T) {
 	if md["namespace"] != "default" {
 		t.Errorf("expected namespace to be preserved, got %v", md["namespace"])
 	}
-	labels, _ := md["labels"].(map[string]any)
-	if labels["team"] != "edge" {
-		t.Errorf("expected labels to be preserved, got %v", md["labels"])
+	if md["resourceVersion"] != "456" {
+		t.Errorf("expected resourceVersion to be preserved (it's a concurrency token, not noise), got %v", md["resourceVersion"])
 	}
-
 	if md["uid"] != "abc-123" {
 		t.Errorf("expected uid to be preserved, got %v", md["uid"])
 	}
-	if md["resourceVersion"] != "456" {
-		t.Errorf("expected resourceVersion to be preserved, got %v", md["resourceVersion"])
+	labels, _ := md["labels"].(map[string]any)
+	if labels["team"] != "edge" {
+		t.Errorf("expected labels to be preserved, got %v", md["labels"])
 	}
 
 	spec, _ := cleaned["spec"].(map[string]any)
@@ -95,11 +94,11 @@ func TestCleanList(t *testing.T) {
 	}
 	for i, item := range cleaned {
 		md := item["metadata"].(map[string]any)
-		if _, present := md["resourceVersion"]; !present {
-			t.Errorf("item %d: expected resourceVersion to be preserved", i)
-		}
 		if _, present := md["managedFields"]; present {
 			t.Errorf("item %d: expected managedFields stripped", i)
+		}
+		if md["resourceVersion"] != "456" {
+			t.Errorf("item %d: expected resourceVersion preserved, got %v", i, md["resourceVersion"])
 		}
 	}
 }

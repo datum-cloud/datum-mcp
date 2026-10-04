@@ -70,6 +70,11 @@ func TestResolveOrgName(t *testing.T) {
 		if !strings.Contains(err.Error(), "no active organization set") {
 			t.Errorf("expected a descriptive error, got %q", err.Error())
 		}
+		// activeOrgOrEmpty (used by the 'context' tool) shares the same
+		// underlying state and must agree with resolveOrgName, minus the error.
+		if got := activeOrgOrEmpty(); got != "" {
+			t.Errorf("expected activeOrgOrEmpty to agree (empty), got %q", got)
+		}
 	})
 
 	t.Run("DATUM_ORG env wins over active org", func(t *testing.T) {
@@ -80,6 +85,9 @@ func TestResolveOrgName(t *testing.T) {
 		got, err := resolveOrgName("")
 		if err != nil || got != "env-org" {
 			t.Fatalf("expected DATUM_ORG env to win over active org, got %q err=%v", got, err)
+		}
+		if got := activeOrgOrEmpty(); got != "env-org" {
+			t.Errorf("expected activeOrgOrEmpty to agree, got %q", got)
 		}
 	})
 
@@ -120,6 +128,26 @@ func TestCrudResourceActionsAndAnnotations(t *testing.T) {
 	suggestion := ro.suggestValidAction()
 	if suggestion.Tool != "dnszoneclasses" || suggestion.Action != "list|get" {
 		t.Errorf("unexpected suggestValidAction result: %+v", suggestion)
+	}
+}
+
+func TestListParamsToAPIOptions(t *testing.T) {
+	p := ListParams{Limit: 25, Continue: "tok", LabelSelector: "a=b", FieldSelector: "metadata.name=foo"}
+	got := p.toAPIOptions()
+	if got.Limit != 25 || got.Continue != "tok" || got.LabelSelector != "a=b" || got.FieldSelector != "metadata.name=foo" {
+		t.Errorf("expected a direct field-for-field conversion, got %+v", got)
+	}
+}
+
+func TestWithDryRunNote(t *testing.T) {
+	notDryRun := withDryRunNote(map[string]any{"deleted": "x"}, false)
+	if _, present := notDryRun["dryRun"]; present {
+		t.Errorf("expected no dryRun key when DryRun is false, got %+v", notDryRun)
+	}
+
+	dryRun := withDryRunNote(map[string]any{"deleted": "x"}, true)
+	if dryRun["dryRun"] != true {
+		t.Errorf("expected dryRun=true to be tagged on the result, got %+v", dryRun)
 	}
 }
 
