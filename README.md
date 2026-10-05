@@ -78,6 +78,14 @@ go build ./cmd/datum-mcp
 - `DATUM_ORG` (active organization for project listing)
 - `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
 
+### Running fully non-interactively (CI, an agent-hosted deployment, etc.)
+Set **both** `DATUM_TOKEN` (a valid bearer token, obtained however you obtain one outside this process) and
+`DATUM_API_HOSTNAME` (e.g. `api.datum.net`). Both are required together: `DATUM_TOKEN` alone used to silently fall
+through to requiring a prior interactive login just to learn the API hostname, even though the token itself was never
+going to come from that login. With both set, no keychain access and no browser is ever needed. `DATUM_USER_ID` is
+also required for the `organizations` tool's `list`/`set` actions (which need a user ID to query memberships), since
+there's no stored-credentials subject to fall back on.
+
 ## Register with your MCP client
 The binary speaks MCP over stdio or streamable http. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
 
