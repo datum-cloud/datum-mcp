@@ -20,7 +20,8 @@ func (p *prefixRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) 
 	return p.next.RoundTrip(r)
 }
 
-// authRoundTripper injects Authorization using the current token and retries once on 401/403 after EnsureAuth.
+// authRoundTripper injects Authorization using the current token and, on a
+// 401, retries once after a fresh interactive login.
 type authRoundTripper struct{ next http.RoundTripper }
 
 func (a *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -35,7 +36,7 @@ func (a *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if shouldRetryWithFreshLogin(resp.StatusCode) {
 		// retry once with refreshed token
 		_ = resp.Body.Close()
 		r2 := r.Clone(r.Context())
@@ -47,4 +48,17 @@ func (a *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 	}
 	return resp, nil
+}
+
+// shouldRetryWithFreshLogin reports whether a response status means "this
+// token is no good, get a new one." Only 401 Unauthorized qualifies. A 403
+// Forbidden means the token was accepted but the request isn't authorized
+// for it - the caller is who they say they are, they just lack a
+// permission, and logging in again as the same user will never change that.
+// Retrying a 403 this way used to open a second interactive browser login
+// that then hung forever waiting for a callback nobody would provide in a
+// non-interactive context (see #87); the caller should see the 403 and its
+// message as-is instead.
+func shouldRetryWithFreshLogin(statusCode int) bool {
+	return statusCode == http.StatusUnauthorized
 }
