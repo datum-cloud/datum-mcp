@@ -248,6 +248,13 @@ kind below.
   is satisfied, never directly. `delete` releases a held allocation back to its pool — e.g. one left behind by a claim
   released under reclaim policy Retain.
 
+### Compute (toolset `compute`)
+- `workloads` — **Actions**: full. Namespaced (`default`). The spec is deeply nested (placements, template, runtime,
+  sandbox, containers) — inspect it first with `apis` (`group: "compute.datumapis.com"`, `version: "v1alpha"`,
+  `kind: "Workload"`, `detail: "structure"`) rather than guessing the shape.
+- `instances` — **Actions**: `list` | `get`. Namespaced (`default`). Read-only: instances come from a Workload's
+  rollout, not direct creation. To change them, create/update/delete the owning workload instead.
+
 ## Toolsets
 Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
 (comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
