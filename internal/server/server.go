@@ -345,6 +345,13 @@ var crudResources = []crudResource{
 		Note: "The spec is deeply nested (placements, template, runtime, sandbox, containers). Before constructing a body, inspect the shape with the 'apis' tool (group=compute.datumapis.com, version=v1alpha, kind=Workload, detail=structure)."},
 	{Tool: "instances", Group: "compute.datumapis.com", Kind: "Instance", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "compute",
 		Note: "Read-only: instances come from a Workload's rollout, not direct creation. To change them, create/update/delete the owning workload instead."},
+
+	// Galactic VPC (toolset "vpc"). The long tail (subnetclaims, connector
+	// advertisements/classes, network policies/interfaces/contexts/bindings,
+	// etc.) is reachable via the generic 'resource' tool.
+	{Tool: "networks", Group: "networking.datumapis.com", Kind: "Network", Namespace: "default", Toolset: "vpc"},
+	{Tool: "subnets", Group: "networking.datumapis.com", Kind: "Subnet", Namespace: "default", Toolset: "vpc"},
+	{Tool: "connectors", Group: "networking.datumapis.com", Kind: "Connector", Namespace: "default", Toolset: "vpc"},
 }
 
 // disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
@@ -559,7 +566,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.6.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.7.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
