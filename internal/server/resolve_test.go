@@ -113,7 +113,7 @@ func TestCrudResourceActionsAndAnnotations(t *testing.T) {
 		t.Errorf("expected DestructiveHint true for a writable resource")
 	}
 
-	ro := crudResource{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", ReadOnly: true}
+	ro := crudResource{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", Actions: []Action{ActionList, ActionGet}}
 	if ro.actions() != "list|get" {
 		t.Errorf("expected read-only action set, got %q", ro.actions())
 	}
@@ -148,6 +148,49 @@ func TestWithDryRunNote(t *testing.T) {
 	dryRun := withDryRunNote(map[string]any{"deleted": "x"}, true)
 	if dryRun["dryRun"] != true {
 		t.Errorf("expected dryRun=true to be tagged on the result, got %+v", dryRun)
+	}
+}
+
+func TestCrudResourceMixedActionSet(t *testing.T) {
+	// e.g. IPAllocation: inspectable and releasable, but never directly created.
+	r := crudResource{Tool: "ipallocations", Actions: []Action{ActionList, ActionGet, ActionDelete}}
+	if r.actions() != "list|get|delete" {
+		t.Errorf("expected list|get|delete, got %q", r.actions())
+	}
+	if r.allows(ActionCreate) || r.allows(ActionUpdate) {
+		t.Errorf("expected create/update to be disallowed")
+	}
+	if !r.allows(ActionList) || !r.allows(ActionGet) || !r.allows(ActionDelete) {
+		t.Errorf("expected list/get/delete to be allowed")
+	}
+	if r.readOnly() {
+		t.Errorf("expected readOnly() false: this resource can still delete")
+	}
+	ann := r.annotations()
+	if ann.ReadOnlyHint {
+		t.Errorf("expected ReadOnlyHint false (it can delete)")
+	}
+	if ann.DestructiveHint == nil || !*ann.DestructiveHint {
+		t.Errorf("expected DestructiveHint true (it can delete)")
+	}
+}
+
+func TestDisabledToolsets(t *testing.T) {
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	if got := disabledToolsets(); len(got) != 0 {
+		t.Errorf("expected empty set when unset, got %v", got)
+	}
+
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", " Billing , iam ,core")
+	got := disabledToolsets()
+	if !got["billing"] || !got["iam"] {
+		t.Errorf("expected billing and iam disabled (case-insensitive, trimmed), got %v", got)
+	}
+	if got["core"] {
+		t.Errorf("expected 'core' to never be disablable, got %v", got)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected exactly 2 disabled toolsets, got %v", got)
 	}
 }
 

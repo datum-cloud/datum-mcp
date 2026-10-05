@@ -134,24 +134,56 @@ func activeOrgOrEmpty() string {
 	return o
 }
 
-// crudResource describes a single CRD-backed resource exposed as an MCP tool
-// supporting list|get|create|update|delete (or, when ReadOnly is true, just
-// list|get). Every resource tool shares this implementation so that response
-// cleaning, error handling, and descriptions only need to be correct once.
+// fullActions is the complete action set a crudResource supports when
+// Actions is left unset.
+var fullActions = []Action{ActionList, ActionGet, ActionCreate, ActionUpdate, ActionDelete}
+
+// crudResource describes a single CRD-backed resource exposed as an MCP tool.
+// Every resource tool shares this implementation so that response cleaning,
+// error handling, and descriptions only need to be correct once.
 type crudResource struct {
 	Tool      string
 	Group     string
 	Kind      string
 	Namespace string // "" for cluster-scoped resources
 	Note      string // optional extra sentence appended to the tool description
-	ReadOnly  bool
+	// Actions restricts which actions this tool supports. Leaving it nil
+	// means the full list|get|create|update|delete set; some resources are
+	// system-managed and only support a subset (e.g. list|get|delete for a
+	// kind a user can inspect and release but never directly create).
+	Actions []Action
+	// Toolset gates registration behind DATUM_MCP_DISABLE_TOOLSETS. "" means
+	// always registered (the original, pre-Phase-2 tool set).
+	Toolset string
+}
+
+func (r crudResource) allowedActions() []Action {
+	if len(r.Actions) == 0 {
+		return fullActions
+	}
+	return r.Actions
+}
+
+func (r crudResource) allows(a Action) bool {
+	for _, allowed := range r.allowedActions() {
+		if allowed == a {
+			return true
+		}
+	}
+	return false
+}
+
+func (r crudResource) readOnly() bool {
+	return !r.allows(ActionCreate) && !r.allows(ActionUpdate) && !r.allows(ActionDelete)
 }
 
 func (r crudResource) actions() string {
-	if r.ReadOnly {
-		return "list|get"
+	allowed := r.allowedActions()
+	parts := make([]string, len(allowed))
+	for i, a := range allowed {
+		parts[i] = string(a)
 	}
-	return "list|get|create|update|delete"
+	return strings.Join(parts, "|")
 }
 
 func (r crudResource) suggestValidAction() *SuggestedAction {
@@ -176,9 +208,10 @@ func (r crudResource) description() string {
 }
 
 func (r crudResource) annotations() *mcp.ToolAnnotations {
-	destructive := !r.ReadOnly
+	ro := r.readOnly()
+	destructive := !ro
 	return &mcp.ToolAnnotations{
-		ReadOnlyHint:    r.ReadOnly,
+		ReadOnlyHint:    ro,
 		DestructiveHint: &destructive,
 		IdempotentHint:  false,
 	}
@@ -196,19 +229,23 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 	if err != nil {
 		return errResult(err, nil)
 	}
-	action := strings.ToLower(strings.TrimSpace(string(in.Action)))
-	if r.ReadOnly && (action == string(ActionCreate) || action == string(ActionUpdate) || action == string(ActionDelete)) {
-		return errResult(fmt.Errorf("%s is read-only; unsupported action: %s", r.Tool, in.Action), r.suggestValidAction())
+	action := Action(strings.ToLower(strings.TrimSpace(string(in.Action))))
+	// A single check covers both "this resource doesn't support that action"
+	// and "that's not a recognized action at all": allowedActions() only
+	// ever contains the five known Action values, so an unrecognized string
+	// like "bogus" fails the same way a disallowed-but-valid action does.
+	if !r.allows(action) {
+		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
 	writeOpts := api.WriteOptions{DryRun: in.DryRun, ExpectedResourceVersion: in.ResourceVersion}
 	switch action {
-	case string(ActionList):
+	case ActionList:
 		list, err := api.FetchList(ctx, cli, r.Group, r.Kind, r.Namespace, in.ListParams.toAPIOptions())
 		if err != nil {
 			return errResult(err, nil)
 		}
 		return okResult(listEnvelope(list))
-	case string(ActionGet):
+	case ActionGet:
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
@@ -217,13 +254,13 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 			return errResult(err, nil)
 		}
 		return okResult(api.CleanObject(obj))
-	case string(ActionCreate):
+	case ActionCreate:
 		obj, err := api.CreateObject(ctx, cli, r.Group, r.Kind, r.Namespace, in.Body, writeOpts)
 		if err != nil {
 			return errResult(err, nil)
 		}
 		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
-	case string(ActionUpdate):
+	case ActionUpdate:
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
@@ -236,7 +273,7 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 			return errResult(err, nil)
 		}
 		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
-	case string(ActionDelete):
+	case ActionDelete:
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
@@ -249,6 +286,8 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 		}
 		return okResult(withDryRunNote(map[string]any{"deleted": in.ID}, in.DryRun))
 	default:
+		// Unreachable: the allows() check above already rejected anything
+		// that isn't one of these five. Kept as a defensive fallback.
 		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
 }
@@ -278,8 +317,27 @@ var crudResources = []crudResource{
 		Note: "Policies target either a Gateway or HTTPRoute via spec.targetRefs."},
 	{Tool: "dnszones", Group: "dns.networking.miloapis.com", Kind: "DNSZone", Namespace: "default"},
 	{Tool: "dnsrecordsets", Group: "dns.networking.miloapis.com", Kind: "DNSRecordSet", Namespace: "default"},
-	{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", ReadOnly: true,
+	{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", Actions: []Action{ActionList, ActionGet},
 		Note: "Cluster-scoped; lists the DNSZoneClasses available when creating a DNSZone."},
+
+	// Phase 2 additions are tagged with a Toolset so they can be disabled via
+	// DATUM_MCP_DISABLE_TOOLSETS (comma-separated, e.g. "billing,iam") without
+	// affecting the original (untagged / Toolset "") tools above, which are
+	// always registered.
+}
+
+// disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
+// "core" can never be disabled this way - leave the set of always-on tools
+// out of it entirely rather than special-casing it everywhere else.
+func disabledToolsets() map[string]bool {
+	set := map[string]bool{}
+	for _, t := range strings.Split(os.Getenv("DATUM_MCP_DISABLE_TOOLSETS"), ",") {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t != "" && t != "core" {
+			set[t] = true
+		}
+	}
+	return set
 }
 
 // Organization memberships tool: list|get|set
@@ -480,7 +538,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.3.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.4.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
@@ -520,13 +578,24 @@ func NewMCPServer() *mcp.Server {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, toolAPIs)
 
+	disabled := disabledToolsets()
 	for _, r := range crudResources {
+		if r.Toolset != "" && disabled[r.Toolset] {
+			continue
+		}
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        r.Tool,
 			Description: r.description(),
 			Annotations: r.annotations(),
 		}, r.handler)
 	}
+
+	resourceDestructive := true
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "resource",
+		Description: resourceToolDescription,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &resourceDestructive, IdempotentHint: false},
+	}, toolResource)
 
 	contextDestructive := false
 	mcp.AddTool(s, &mcp.Tool{

@@ -76,6 +76,7 @@ go build ./cmd/datum-mcp
 - `DATUM_VERBOSE` (`true` to print verbose auth logs)
 - `DATUM_USER_ID` (override user subject; otherwise from stored credentials)
 - `DATUM_ORG` (active organization for project listing)
+- `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
 
 ## Register with your MCP client
 The binary speaks MCP over stdio or streamable http. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
@@ -217,6 +218,23 @@ Every tool's `list` action accepts:
     `projects_truncated` are `true` when there are more, and `next_step` says to use the paginated `organizations`/
     `projects` list action and follow `continue` instead. `organizations` action=`set` and `projects` action=`set`
     always verify membership against the complete set regardless of size, independent of this cap.
+
+- resource (generic escape hatch)
+  - **Actions**: `list` | `get` | `create` | `update` | `delete`, same shape and semantics as every other resource tool.
+  - **Input**: adds `group` (required, e.g. `"compute.datumapis.com"`), `kind` (required, e.g. `"Workload"`), and
+    `namespace` (required if the kind is namespaced — check with `apis`) to the usual `project`/`id`/`body`/pagination/
+    `dryRun`/`resourceVersion` fields.
+  - **Behavior**: for any resource kind that doesn't have a dedicated tool. Only `*.datumapis.com`/`*.miloapis.com`
+    groups and the Gateway API groups are reachable here; everything else the control plane also exposes (core
+    Kubernetes machinery, RBAC, admission webhooks, etc.) is refused. Use `apis` (`action: "list"`) first to find a
+    kind's group and whether it's namespaced.
+
+## Toolsets
+Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
+(comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
+`DATUM_MCP_DISABLE_TOOLSETS=billing,iam`. The original tool set (organizations/projects/users/domains/httpproxies/
+httproutes/gateways/trafficprotectionpolicies/dnszones/dnsrecordsets/dnszoneclasses/apis/context/resource) is always on
+and can't be disabled this way.
 
 ## Prompts
 In addition to tools, the server exposes MCP prompts for common multi-step workflows. Clients that support `prompts/list`
