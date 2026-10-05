@@ -282,6 +282,26 @@ kind below.
   `spec.limit`, `spec.targetResources` (optional `[{group,kind,version}]` to scope to specific kinds) — results come
   back in `status.results`.
 
+### IAM (toolset `iam`) — read-only
+Write access (granting roles/permissions) is deferred pending a safety design; these cover the most common need —
+auditing who has access, not managing it.
+- `roles` — **Actions**: `list` | `get`. Namespaced (`default`).
+- `policybindings` — **Actions**: `list` | `get`. Namespaced (`default`). Binds a Role to subjects
+  (User/Group/ServiceAccount) over a `resourceSelector`.
+
+### Services (toolset `services`)
+- `services` — **Actions**: `list` | `get`. Cluster-scoped. The platform's service catalog.
+- `serviceentitlements` — **Actions**: full. Cluster-scoped. `create` is how a project requests access to a service —
+  what `datumctl services enable` does: `body.spec.serviceRef.name` (required, a name from `services`),
+  `body.spec.requestMessage` (optional, for services that require provider approval). `ServiceConsumer` (the
+  provider-side, approval-only object) is deliberately not exposed — its schema says providers never create these
+  directly.
+
+### Billing (toolset `billing`) — read-only
+Reporting, not configuration.
+- `billingaccounts` — **Actions**: `list` | `get`. Namespaced (`default`).
+- `invoices` — **Actions**: `list` | `get`. Namespaced (`default`).
+
 ## Toolsets
 Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
 (comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
