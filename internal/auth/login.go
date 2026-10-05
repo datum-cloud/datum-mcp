@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/pkg/browser"
@@ -78,6 +79,43 @@ func getenvDefault(k, d string) string {
 	return d
 }
 
+// oidcDiscoveryMaxAttempts and oidcDiscoveryBaseDelay bound
+// discoverProviderWithRetry: a transient DNS/network blip while resolving
+// the OIDC provider's well-known config (see #27 - "dial tcp: lookup
+// auth.datum.net: i/o timeout") otherwise fails the entire login attempt
+// with no retry at all, even though the discovery request itself is a
+// side-effect-free GET that's always safe to retry.
+const (
+	oidcDiscoveryMaxAttempts = 3
+	oidcDiscoveryBaseDelay   = 500 * time.Millisecond
+)
+
+func discoverProviderWithRetry(ctx context.Context, providerURL string) (*oidc.Provider, error) {
+	var lastErr error
+	delay := oidcDiscoveryBaseDelay
+	for attempt := 1; attempt <= oidcDiscoveryMaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		provider, err := oidc.NewProvider(ctx, providerURL)
+		if err == nil {
+			return provider, nil
+		}
+		lastErr = err
+		if attempt == oidcDiscoveryMaxAttempts {
+			break
+		}
+		log.Printf("OIDC provider discovery attempt %d/%d failed, retrying in %s: %v", attempt, oidcDiscoveryMaxAttempts, delay, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+	return nil, lastErr
+}
+
 // RunLoginFlow performs the PKCE OAuth2 login and stores credentials in keyring.
 func RunLoginFlow(ctx context.Context, verbose bool) error {
 	authHostname, apiHostname := defaultHostnames()
@@ -102,7 +140,7 @@ func RunLoginFlow(ctx context.Context, verbose bool) error {
 	}
 
 	providerURL := fmt.Sprintf("https://%s", authHostname)
-	provider, err := oidc.NewProvider(ctx, providerURL)
+	provider, err := discoverProviderWithRetry(ctx, providerURL)
 	if err != nil {
 		return fmt.Errorf("failed to discover OIDC provider at %s: %w", providerURL, err)
 	}
