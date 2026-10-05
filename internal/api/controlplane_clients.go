@@ -29,6 +29,12 @@ var (
 	sharedMapperMu sync.Mutex
 )
 
+// requestTimeout bounds a single HTTP attempt. It applies per-attempt, not
+// across client-go's own retry loop (see the rest.Config.Timeout comment
+// below), so it protects against a stalled connection without fighting that
+// retry logic.
+const requestTimeout = 30 * time.Second
+
 func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Client, error) {
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return nil, err
@@ -40,6 +46,12 @@ func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Clien
 
 	cfg := &rest.Config{
 		Host: "https://" + strings.TrimRight(apiHost, "/"),
+		// Bounds a single request attempt so a dead/stalled connection can't
+		// hang a tool call forever. client-go's own retry-on-429/5xx (up to
+		// 10 attempts, honoring Retry-After - see NewRequest's default in
+		// k8s.io/client-go/rest) applies around this per-attempt timeout,
+		// not instead of it.
+		Timeout: requestTimeout,
 		// WrapTransport to prefix base path
 		WrapTransport: func(rt http.RoundTripper) http.RoundTripper {
 			if rt == nil {
@@ -152,5 +164,9 @@ func NewProjectHTTPClient(ctx context.Context, project string) (*http.Client, st
 	if err != nil {
 		return nil, "", err
 	}
-	return &http.Client{Transport: tr}, cfg.Host, nil
+	// rest.TransportFor only builds the RoundTripper; unlike the
+	// ctrlclient.Client path (which goes through rest.HTTPClientFor and so
+	// picks up cfg.Timeout automatically), this http.Client is constructed
+	// directly, so the timeout has to be set here too.
+	return &http.Client{Transport: tr, Timeout: requestTimeout}, cfg.Host, nil
 }
