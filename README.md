@@ -82,9 +82,21 @@ go build ./cmd/datum-mcp
 The binary speaks MCP over stdio or streamable http. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
 
 ## Run modes
-- Stdio (http coming soon):
+- **Stdio** (default, and what every mainstream MCP client - Claude Desktop, Claude Code, Cursor - expects): the client
+  spawns `datum-mcp` itself as a subprocess and talks JSON-RPC over its stdin/stdout. This is the `command`-style config
+  shown under Installation above.
 ```bash
 datum-mcp
+```
+- **HTTP** (for a server you run yourself as a persistent process, e.g. on a shared host): `datum-mcp` listens and
+  serves MCP over streamable HTTP; your client connects to it **by URL**, the same way a browser connects to a web
+  server - the client does not spawn this command. Do not combine `--mode http` with a client config shape that spawns
+  a command (an HTTP-type client config normally takes a `url`, not a `command`); that mismatch is what issue #19 on
+  this repo turned out to be. Exits gracefully on SIGINT/SIGTERM.
+```bash
+datum-mcp --mode http --host localhost --port 9000
+# then point your client's MCP config at http://localhost:9000 (however that
+# client's config format expresses "connect to this URL", not "run this command")
 ```
 
 ## Tools

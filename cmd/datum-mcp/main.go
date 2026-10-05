@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"github.com/datum-cloud/datum-mcp/internal/server"
 	"github.com/spf13/cobra"
@@ -18,7 +20,8 @@ func newRootCmd() *cobra.Command {
 		Use:   "datum-mcp",
 		Short: "Datum MCP server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
 			switch mode {
 			case "stdio":
 				return server.Run(ctx)

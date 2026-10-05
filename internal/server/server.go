@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -686,8 +688,30 @@ func Run(ctx context.Context) error {
 }
 
 // RunHTTP starts the server using the streamable HTTP transport at addr (e.g., "localhost:9000").
+// This is for a client that connects to an already-running server by URL
+// (an HTTP-type MCP client config), not one that spawns datum-mcp itself as
+// a subprocess - that's what stdio mode (the default) is for. Shuts down
+// gracefully when ctx is canceled (e.g. on SIGINT/SIGTERM - see cmd/datum-mcp).
 func RunHTTP(ctx context.Context, addr string) error {
 	s := NewMCPServer()
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return s }, nil)
-	return http.ListenAndServe(addr, handler)
+	httpServer := &http.Server{Addr: addr, Handler: handler}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- httpServer.ListenAndServe()
+	}()
+	log.Printf("datum-mcp listening (http) on %s", addr)
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return httpServer.Shutdown(shutdownCtx)
+	}
 }
