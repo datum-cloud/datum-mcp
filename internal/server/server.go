@@ -352,6 +352,13 @@ var crudResources = []crudResource{
 	{Tool: "networks", Group: "networking.datumapis.com", Kind: "Network", Namespace: "default", Toolset: "vpc"},
 	{Tool: "subnets", Group: "networking.datumapis.com", Kind: "Subnet", Namespace: "default", Toolset: "vpc"},
 	{Tool: "connectors", Group: "networking.datumapis.com", Kind: "Connector", Namespace: "default", Toolset: "vpc"},
+
+	// Search (toolset "search"). Same create-a-query-get-synchronous-results
+	// pattern as the 'activity' tool, but a single Kind, so it's a plain
+	// crudResource rather than needing a queryType multiplexer.
+	{Tool: "search", Group: "search.miloapis.com", Kind: "ResourceSearchQuery", Toolset: "search",
+		Note: "The primary action is 'create': body.spec.query (required), body.spec.limit, body.spec.targetResources " +
+			"(optional [{group,kind,version}] to scope to specific kinds) - results come back in the same response's status.results, nothing is persisted the way domains/dnszones/etc. are."},
 }
 
 // disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
@@ -566,7 +573,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.7.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.8.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
@@ -625,6 +632,15 @@ func NewMCPServer() *mcp.Server {
 			Description: resourceToolDescription,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &resourceDestructive, IdempotentHint: false},
 		}, toolResource)
+	}
+
+	if !disabled["activity"] {
+		activityDestructive := true
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "activity",
+			Description: activityToolDescription,
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &activityDestructive, IdempotentHint: false},
+		}, toolActivity)
 	}
 
 	contextDestructive := false
