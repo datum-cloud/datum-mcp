@@ -324,6 +324,19 @@ var crudResources = []crudResource{
 	// DATUM_MCP_DISABLE_TOOLSETS (comma-separated, e.g. "billing,iam") without
 	// affecting the original (untagged / Toolset "") tools above, which are
 	// always registered.
+
+	// IPAM (toolset "ipam"). Mirrors datumctl's own class/pool/claim/allocation
+	// grouping: classes are operator-authored and read-only; pools and claims
+	// are the two things a user actually creates; allocations are system-
+	// created records a user can only inspect and release.
+	{Tool: "ipclasses", Group: "ipam.miloapis.com", Kind: "IPClass", Actions: []Action{ActionList, ActionGet}, Toolset: "ipam",
+		Note: "Cluster-scoped and operator-authored (read-only): the kinds of address space a claim can name. Check a class's pools in its status before claiming from it - a class with no pool can't satisfy any claim."},
+	{Tool: "ippools", Group: "ipam.miloapis.com", Kind: "IPPool", Toolset: "ipam",
+		Note: "Cluster-scoped. Root pools declare a CIDR; child pools carve a sub-prefix from a parent. 'delete' releases a pool."},
+	{Tool: "ipclaims", Group: "ipam.miloapis.com", Kind: "IPClaim", Namespace: "default", Toolset: "ipam",
+		Note: "A claim names a class (see ipclasses) and a scope - never a pool, CIDR, or location; the server resolves those and reports the result in status.poolRef/status.allocatedCIDR. 'delete' releases the claim."},
+	{Tool: "ipallocations", Group: "ipam.miloapis.com", Kind: "IPAllocation", Namespace: "default", Actions: []Action{ActionList, ActionGet, ActionDelete}, Toolset: "ipam",
+		Note: "Created by the system when a claim is satisfied, never directly - there is no create/update action. 'delete' releases a held allocation back to its pool, e.g. one left behind by a claim released under reclaim policy Retain."},
 }
 
 // disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
@@ -538,7 +551,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.4.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.5.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{

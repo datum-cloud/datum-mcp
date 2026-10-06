@@ -232,6 +232,22 @@ Every tool's `list` action accepts:
     Kubernetes machinery, RBAC, admission webhooks, etc.) is refused. Use `apis` (`action: "list"`) first to find a
     kind's group and whether it's namespaced. Can itself be disabled via `DATUM_MCP_DISABLE_TOOLSETS=resource`.
 
+### IPAM (toolset `ipam`)
+Mirrors `datumctl ipam`'s own class/pool/claim/allocation grouping. All four share the usual CRUD tool shape
+(`list`/`get`/`create`/`update`/`delete`, `project`/`id`/`body`/pagination/`dryRun`/`resourceVersion`), restricted per
+kind below.
+
+- `ipclasses` — **Actions**: `list` | `get`. Cluster-scoped, operator-authored. The kinds of address space a claim can
+  name; check a class's pools (in its status) before claiming from it.
+- `ippools` — **Actions**: full. Cluster-scoped. Root pools declare a CIDR; child pools carve a sub-prefix from a
+  parent. `delete` releases a pool.
+- `ipclaims` — **Actions**: full. Namespaced (`default`). A claim names a class and a scope — never a pool, CIDR, or
+  location; the server resolves those and reports them in `status.poolRef`/`status.allocatedCIDR`. `delete` releases
+  the claim.
+- `ipallocations` — **Actions**: `list` | `get` | `delete`. Namespaced (`default`). Created by the system when a claim
+  is satisfied, never directly. `delete` releases a held allocation back to its pool — e.g. one left behind by a claim
+  released under reclaim policy Retain.
+
 ## Toolsets
 Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
 (comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
