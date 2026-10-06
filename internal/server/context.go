@@ -31,12 +31,14 @@ type ProjectSummary struct {
 }
 
 type ContextResult struct {
-	Authenticated      bool             `json:"authenticated"`
-	ActiveOrganization string           `json:"active_organization,omitempty"`
-	ActiveProject      string           `json:"active_project,omitempty"`
-	Organizations      []OrgSummary     `json:"organizations,omitempty"`
-	Projects           []ProjectSummary `json:"projects,omitempty"`
-	NextStep           string           `json:"next_step,omitempty"`
+	Authenticated          bool             `json:"authenticated"`
+	ActiveOrganization     string           `json:"active_organization,omitempty"`
+	ActiveProject          string           `json:"active_project,omitempty"`
+	Organizations          []OrgSummary     `json:"organizations,omitempty"`
+	OrganizationsTruncated bool             `json:"organizations_truncated,omitempty"`
+	Projects               []ProjectSummary `json:"projects,omitempty"`
+	ProjectsTruncated      bool             `json:"projects_truncated,omitempty"`
+	NextStep               string           `json:"next_step,omitempty"`
 }
 
 func toolContext(ctx context.Context, _ *mcp.CallToolRequest, _ ContextInput) (*mcp.CallToolResult, any, error) {
@@ -65,6 +67,7 @@ func toolContext(ctx context.Context, _ *mcp.CallToolRequest, _ ContextInput) (*
 	if err != nil {
 		return errResult(err, nil)
 	}
+	res.OrganizationsTruncated = memList.GetContinue() != ""
 	for _, it := range memList.Items {
 		name, _, _ := unstructured.NestedString(it.Object, "spec", "organizationRef", "name")
 		if name == "" {
@@ -77,6 +80,9 @@ func toolContext(ctx context.Context, _ *mcp.CallToolRequest, _ ContextInput) (*
 	res.ActiveOrganization = activeOrgOrEmpty()
 	if res.ActiveOrganization == "" {
 		res.NextStep = "Call 'organizations' with action=set and one of the names from 'organizations' above."
+		if res.OrganizationsTruncated {
+			res.NextStep += " 'organizations' above is capped at 500; if yours isn't listed, call 'organizations' with action=list and follow 'continue' to see the rest."
+		}
 		return okResult(res)
 	}
 
@@ -90,12 +96,16 @@ func toolContext(ctx context.Context, _ *mcp.CallToolRequest, _ ContextInput) (*
 	if err != nil {
 		return errResult(err, nil)
 	}
+	res.ProjectsTruncated = projList.GetContinue() != ""
 	for _, it := range projList.Items {
 		res.Projects = append(res.Projects, ProjectSummary{Name: it.GetName()})
 	}
 
 	if res.ActiveProject == "" {
 		res.NextStep = "Call 'projects' with action=set and body.name set to one of the names from 'projects' above."
+		if res.ProjectsTruncated {
+			res.NextStep += " 'projects' above is capped at 500; if yours isn't listed, call 'projects' with action=list and follow 'continue' to see the rest."
+		}
 	}
 	return okResult(res)
 }

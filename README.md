@@ -213,7 +213,10 @@ Every tool's `list` action accepts:
   - **Behavior**: a stateless discovery snapshot, not session memory. Returns `authenticated`, `active_organization`,
     `active_project`, the organizations/projects you can reach, and a `next_step` with the exact next tool call to make
     (`null` once an active project is set). Doesn't trigger the OAuth login flow itself — call any other tool to do that
-    if `authenticated` is `false`.
+    if `authenticated` is `false`. The organizations/projects shown are capped at 500 each; `organizations_truncated` /
+    `projects_truncated` are `true` when there are more, and `next_step` says to use the paginated `organizations`/
+    `projects` list action and follow `continue` instead. `organizations` action=`set` and `projects` action=`set`
+    always verify membership against the complete set regardless of size, independent of this cap.
 
 ## Prompts
 In addition to tools, the server exposes MCP prompts for common multi-step workflows. Clients that support `prompts/list`

@@ -241,6 +241,10 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
 		if err := api.DeleteObject(ctx, cli, r.Group, r.Kind, r.Namespace, in.ID, writeOpts); err != nil {
+			var conflict *api.ConflictError
+			if errors.As(err, &conflict) {
+				return errResult(err, suggestGet(r.Tool, in.ID))
+			}
 			return errResult(err, nil)
 		}
 		return okResult(withDryRunNote(map[string]any{"deleted": in.ID}, in.DryRun))
@@ -312,13 +316,14 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 			return errResult(fmt.Errorf("invalid params: name is required"), nil)
 		}
 		// Membership verification always checks the full set, independent of
-		// any list-only pagination the caller passed in.
-		memList, err := api.FetchList(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "", api.ListOptions{Limit: api.MaxListLimit})
+		// any list-only pagination the caller passed in, and must not miss a
+		// membership just because the caller has more than one page of them.
+		memItems, err := api.FetchAllItems(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "")
 		if err != nil {
 			return errResult(err, nil)
 		}
 		allowed := false
-		for _, it := range memList.Items {
+		for _, it := range memItems {
 			orgName, _, _ := unstructured.NestedString(it.Object, "spec", "organizationRef", "name")
 			if strings.EqualFold(orgName, name) {
 				allowed = true
@@ -379,13 +384,14 @@ func toolProjects(ctx context.Context, _ *mcp.CallToolRequest, in ProjectsInput)
 			return errResult(fmt.Errorf("invalid params: body.name is required"), nil)
 		}
 		// Membership verification always checks the full set, independent of
-		// any list-only pagination the caller passed in.
-		plist, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "Project", "", api.ListOptions{Limit: api.MaxListLimit})
+		// any list-only pagination the caller passed in, and must not miss a
+		// project just because the org has more than one page of them.
+		pitems, err := api.FetchAllItems(ctx, cli, "resourcemanager.miloapis.com", "Project", "")
 		if err != nil {
 			return errResult(err, nil)
 		}
 		found := false
-		for _, it := range plist.Items {
+		for _, it := range pitems {
 			if strings.EqualFold(it.GetName(), name) {
 				found = true
 				break

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -60,6 +61,28 @@ func FetchList(ctx context.Context, cli ctrlclient.Client, group, kind, namespac
 		return nil, err
 	}
 	return &list, nil
+}
+
+// FetchAllItems fetches every item of a kind across all pages, following the
+// continuation token until the server reports none remain. Use this only
+// where correctness requires seeing the complete set regardless of size
+// (e.g. membership verification) — everywhere else, prefer FetchList with
+// caller-controlled pagination so a single tool call can't be made to pull
+// an unbounded collection into model context.
+func FetchAllItems(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string) ([]unstructured.Unstructured, error) {
+	var all []unstructured.Unstructured
+	cont := ""
+	for {
+		list, err := FetchList(ctx, cli, group, kind, namespace, ListOptions{Limit: MaxListLimit, Continue: cont})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, list.Items...)
+		cont = list.GetContinue()
+		if cont == "" {
+			return all, nil
+		}
+	}
 }
 
 func CreateObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string, in any, opts WriteOptions) (*unstructured.Unstructured, error) {
@@ -138,6 +161,9 @@ func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, n
 		}
 	}
 	if err := cli.Update(ctx, &obj, opts.updateOpts()...); err != nil {
+		if apierrors.IsConflict(err) {
+			return nil, &ConflictError{Kind: kind, Name: name}
+		}
 		return nil, err
 	}
 	return &obj, nil
@@ -154,7 +180,13 @@ func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, names
 		obj.SetNamespace(namespace)
 	}
 	obj.SetName(name)
-	return cli.Delete(ctx, &obj, opts.deleteOpts()...)
+	if err := cli.Delete(ctx, &obj, opts.deleteOpts()...); err != nil {
+		if apierrors.IsConflict(err) {
+			return &ConflictError{Kind: kind, Name: name}
+		}
+		return err
+	}
+	return nil
 }
 
 // Discovery: CRD schema via OpenAPI v3 direct path: /openapi/v3/apis/<group>/<version>[/<kind>]
