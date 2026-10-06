@@ -15,6 +15,14 @@ See **[docs/TOOLS.md](docs/TOOLS.md)** for the full tool-by-tool reference, tool
 
 ## Install the binary
 
+**Homebrew (macOS/Linux):**
+```bash
+brew tap datum-cloud/tap
+brew install datum-mcp
+# upgrade later with: brew upgrade datum-mcp
+```
+
+**Install script (macOS/Linux):**
 ```bash
 curl -fsSL https://github.com/datum-cloud/datum-mcp/releases/latest/download/install.sh | sh
 ```
@@ -58,5 +66,12 @@ reuse/refresh the token automatically. For CI or headless use, see "Running full
 2. `organizations` → list, then set active org
 3. `projects` → list for the org, then set active project
 4. Use any resource tool for CRUD, or `apis` to inspect CRD schemas
+
+## Claude Code skill: when to use Patch instead
+This repo ships a [Claude Code skill](.claude/skills/datum-cloud-assistant/SKILL.md) that teaches an agent when an
+open-ended diagnostic question or a risky/multi-resource change is better handled by **Patch** — Datum Cloud's own
+AI assistant, shipped as a `datumctl` plugin (`datumctl plugin install assistant`) — instead of datum-mcp's own
+resource tools. Copy `.claude/skills/datum-cloud-assistant/` into your own project's (or `~/.claude/skills/` for a
+global) skills directory to pick it up anywhere you use datum-mcp.
 
 (Or just use the `onboard-to-project` prompt for steps 1-3.)
