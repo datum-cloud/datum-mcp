@@ -11,7 +11,11 @@
 
 # datum-mcp
 
-An MCP server for Datum Cloud with OAuth 2.1 (PKCE) auth, macOS Keychain token storage, and tools for listing/operating on organizations, projects, domains, HTTP proxies, HTTP routes, gateways, traffic protection policies, DNS zones/records, and CRD schemas.
+An MCP server for Datum Cloud, with OAuth 2.1 (PKCE) auth and system-keychain token storage. Gives an agent tools to
+discover and manage organizations and projects; networking (domains, HTTP proxies/routes, gateways, traffic protection
+policies, DNS); compute workloads; IP address management; Galactic VPC; platform access and billing (IAM, services,
+service entitlements, billing accounts/invoices); audit logs, Kubernetes events, and resource search; and a generic
+escape hatch plus schema discovery for any other Datum-managed CRD. Speaks MCP over stdio or streamable HTTP.
 
 ## Installation
 
@@ -353,5 +357,5 @@ and `prompts/get` can surface these directly:
 2. `organizations` → list orgs, then set active org
 3. `projects` → list for an org, then set active project
 4. `context` → confirm `next_step` is `null` (or just use the `onboard-to-project` prompt for steps 1-4)
-5. Use `domains` / `httpproxies` / `httproutes` / `gateways` / `trafficprotectionpolicies` / `dnszones` / `dnsrecordsets` / `dnszoneclasses` for CRUD/list/get, or `apis` to inspect CRD schemas
+5. Use `domains` / `httpproxies` / `httproutes` / `gateways` / `trafficprotectionpolicies` / `dnszones` / `dnsrecordsets` / `dnszoneclasses` (or any other resource tool — see the full list under Tools above) for CRUD/list/get, or `apis` to inspect CRD schemas
 
