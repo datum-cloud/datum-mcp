@@ -5,6 +5,70 @@ import (
 	"testing"
 )
 
+func TestMergeJSONPreservesUntouchedSiblings(t *testing.T) {
+	dst := map[string]any{"replicas": int64(3), "image": "api:1.0"}
+	patch := map[string]any{"image": "api:1.1"}
+
+	got := mergeJSON(dst, patch)
+	want := map[string]any{"replicas": int64(3), "image": "api:1.1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeJSONNullDeletesField(t *testing.T) {
+	dst := map[string]any{"replicas": int64(3), "image": "api:1.0"}
+	patch := map[string]any{"image": nil}
+
+	got := mergeJSON(dst, patch)
+	want := map[string]any{"replicas": int64(3)}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeJSONRecursesIntoNestedObjects(t *testing.T) {
+	dst := map[string]any{
+		"template": map[string]any{"port": int64(8080), "env": "prod"},
+	}
+	patch := map[string]any{
+		"template": map[string]any{"port": int64(9090)},
+	}
+
+	got := mergeJSON(dst, patch)
+	want := map[string]any{
+		"template": map[string]any{"port": int64(9090), "env": "prod"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeJSONReplacesArraysWholesale(t *testing.T) {
+	dst := map[string]any{"ports": []any{int64(80), int64(443)}}
+	patch := map[string]any{"ports": []any{int64(8080)}}
+
+	got := mergeJSON(dst, patch)
+	want := map[string]any{"ports": []any{int64(8080)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeJSONDoesNotMutateInputs(t *testing.T) {
+	dst := map[string]any{"a": map[string]any{"b": int64(1)}}
+	patch := map[string]any{"a": map[string]any{"b": int64(2)}}
+
+	_ = mergeJSON(dst, patch)
+
+	if dst["a"].(map[string]any)["b"] != int64(1) {
+		t.Errorf("mergeJSON must not mutate dst, got %v", dst)
+	}
+	if patch["a"].(map[string]any)["b"] != int64(2) {
+		t.Errorf("mergeJSON must not mutate patch, got %v", patch)
+	}
+}
+
 func TestTrimToStructureDropsDescriptiveKeys(t *testing.T) {
 	schema := map[string]any{
 		"type":        "object",

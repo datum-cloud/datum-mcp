@@ -36,7 +36,7 @@ type RoutedInput struct {
 	// ID required for get/update/delete
 	ID string `json:"id,omitempty" jsonschema:"Resource name; required for get, update, and delete."`
 	// Body is the request payload for create/update
-	Body map[string]any `json:"body,omitempty" jsonschema:"Resource manifest, e.g. {\"metadata\":{...},\"spec\":{...}}; required for create, merged into spec for update."`
+	Body map[string]any `json:"body,omitempty" jsonschema:"Resource manifest, e.g. {\"metadata\":{...},\"spec\":{...}}; required for create. For update, body.spec is deep-merged into the existing spec field-by-field: a null field deletes it, nested objects merge recursively, and arrays/scalars replace wholesale — omitted fields are left untouched."`
 }
 
 type APIInfoInput struct {

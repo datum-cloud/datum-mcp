@@ -92,8 +92,11 @@ All tools accept JSON inputs and return both structured content and a pretty-pri
 ### Response and error format
 - **Successful list responses** are returned as `{ "items": [...], "count": N }`, not a raw Kubernetes list.
 - **Successful get/create/update responses** return the resource with internal-only Kubernetes metadata stripped
-  (`managedFields`, `resourceVersion`, `uid`, `generation`, `creationTimestamp`, `selfLink`). `spec`, `status`, `name`,
-  `namespace`, `labels`, and `annotations` are preserved in full.
+  (`managedFields`, `generation`, `creationTimestamp`, `selfLink`). `uid` and `resourceVersion` are preserved: `uid` is
+  how an agent references the object elsewhere, and `resourceVersion` is the concurrency token to round-trip into a
+  later update/delete. `spec`, `status`, `name`, `namespace`, `labels`, and `annotations` are preserved in full.
+- **Update** deep-merges `body.spec` into the existing spec field-by-field: a null field deletes it, nested objects
+  merge recursively, and arrays/scalars replace wholesale. Fields omitted from `body.spec` are left untouched.
 - **Errors** are returned as structured JSON, not a plain-text message: `{ "error": "...", "suggested_action": { "tool": "...", "action": "...", "args": {...} } }`.
   `suggested_action` is populated whenever there's a clear recovery step (e.g. no active project/organization set).
 

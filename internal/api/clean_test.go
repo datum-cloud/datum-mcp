@@ -49,6 +49,13 @@ func TestCleanObjectStripsInternalMetadata(t *testing.T) {
 		t.Errorf("expected labels to be preserved, got %v", md["labels"])
 	}
 
+	if md["uid"] != "abc-123" {
+		t.Errorf("expected uid to be preserved, got %v", md["uid"])
+	}
+	if md["resourceVersion"] != "456" {
+		t.Errorf("expected resourceVersion to be preserved, got %v", md["resourceVersion"])
+	}
+
 	spec, _ := cleaned["spec"].(map[string]any)
 	if spec["domainName"] != "example.com" {
 		t.Errorf("expected spec to be preserved in full, got %v", cleaned["spec"])
@@ -88,8 +95,11 @@ func TestCleanList(t *testing.T) {
 	}
 	for i, item := range cleaned {
 		md := item["metadata"].(map[string]any)
-		if _, present := md["resourceVersion"]; present {
-			t.Errorf("item %d: expected resourceVersion stripped", i)
+		if _, present := md["resourceVersion"]; !present {
+			t.Errorf("item %d: expected resourceVersion to be preserved", i)
+		}
+		if _, present := md["managedFields"]; present {
+			t.Errorf("item %d: expected managedFields stripped", i)
 		}
 	}
 }

@@ -4,10 +4,13 @@ import "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 // internalMetadataFields are Kubernetes bookkeeping fields that carry no
 // meaning for an agent and needlessly inflate every tool response.
+//
+// resourceVersion and uid are deliberately not included here: resourceVersion
+// is the concurrency token an agent must round-trip from get into a later
+// update/delete, and uid is how an agent references the object elsewhere
+// (e.g. ownerReferences).
 var internalMetadataFields = []string{
 	"managedFields",
-	"resourceVersion",
-	"uid",
 	"generation",
 	"creationTimestamp",
 	"selfLink",
