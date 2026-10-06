@@ -80,6 +80,32 @@ func CreateObject(ctx context.Context, cli ctrlclient.Client, group, kind, names
 	return &obj, nil
 }
 
+// mergeJSON applies RFC 7386 JSON Merge Patch semantics: patch is merged
+// into dst recursively. A null value in patch deletes the corresponding key
+// from the result. Any other value (including arrays and scalars) replaces
+// dst's value wholesale rather than being merged element-wise. dst and patch
+// are not mutated; a new map is returned.
+func mergeJSON(dst, patch map[string]any) map[string]any {
+	out := make(map[string]any, len(dst))
+	for k, v := range dst {
+		out[k] = v
+	}
+	for k, pv := range patch {
+		if pv == nil {
+			delete(out, k)
+			continue
+		}
+		if pm, ok := pv.(map[string]any); ok {
+			if dm, ok := out[k].(map[string]any); ok {
+				out[k] = mergeJSON(dm, pm)
+				continue
+			}
+		}
+		out[k] = pv
+	}
+	return out
+}
+
 func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string, in any) (*unstructured.Unstructured, error) {
 	objGVK, _, err := resolveGVKs(group, kind)
 	if err != nil {
@@ -94,8 +120,18 @@ func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, n
 	if err := assignJSON(&patch.Object, in); err != nil {
 		return nil, err
 	}
-	if spec, found, _ := unstructured.NestedFieldNoCopy(patch.Object, "spec"); found {
-		_ = unstructured.SetNestedField(obj.Object, spec, "spec")
+	if specRaw, found, _ := unstructured.NestedFieldNoCopy(patch.Object, "spec"); found && specRaw != nil {
+		specPatch, ok := specRaw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("body.spec must be an object, got %T", specRaw)
+		}
+		existingSpec, _, err := unstructured.NestedMap(obj.Object, "spec")
+		if err != nil {
+			return nil, fmt.Errorf("existing spec is not an object: %w", err)
+		}
+		if err := unstructured.SetNestedMap(obj.Object, mergeJSON(existingSpec, specPatch), "spec"); err != nil {
+			return nil, err
+		}
 	}
 	if err := cli.Update(ctx, &obj); err != nil {
 		return nil, err
@@ -118,7 +154,10 @@ func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, names
 }
 
 // Discovery: CRD schema via OpenAPI v3 direct path: /openapi/v3/apis/<group>/<version>[/<kind>]
-func GetResourceDefinition(ctx context.Context, project, group, version, kind string, out any) error {
+// When structureOnly is true, the schema is reduced to its structural shape
+// (types, properties, required, items, additionalProperties, oneOf/anyOf/allOf)
+// to save context; descriptions, formats, and examples are dropped.
+func GetResourceDefinition(ctx context.Context, project, group, version, kind string, structureOnly bool, out any) error {
 	httpClient, host, err := NewProjectHTTPClient(ctx, project)
 	if err != nil {
 		return err
@@ -166,6 +205,9 @@ func GetResourceDefinition(ctx context.Context, project, group, version, kind st
 							vStr, _ := em["version"].(string)
 							kStr, _ := em["kind"].(string)
 							if strings.EqualFold(gStr, strings.Trim(group, ".")) && strings.EqualFold(vStr, strings.Trim(version, ".")) && strings.EqualFold(kStr, k) {
+								if structureOnly {
+									return assignJSON(out, trimToStructure(sm))
+								}
 								return assignJSON(out, sm)
 							}
 						}
@@ -173,6 +215,9 @@ func GetResourceDefinition(ctx context.Context, project, group, version, kind st
 				}
 			}
 		}
+	}
+	if structureOnly {
+		return assignJSON(out, trimToStructure(doc))
 	}
 	return assignJSON(out, doc)
 }
