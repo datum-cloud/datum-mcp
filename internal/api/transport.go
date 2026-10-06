@@ -40,9 +40,19 @@ func (a *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 		// retry once with refreshed token
 		_ = resp.Body.Close()
 		r2 := r.Clone(r.Context())
-		// force a new interactive login if refresh token is invalid
-		_ = auth.RunLoginFlow(r2.Context(), false)
-		if tkn2, err2 := auth.EnsureAuth(r2.Context()); err2 == nil && tkn2 != "" {
+		if r.GetBody != nil {
+			// r.Clone shares the original Body, which the first RoundTrip
+			// above already drained; without a fresh reader, a retried
+			// POST/PUT/PATCH would send an empty body.
+			if body, err := r.GetBody(); err == nil {
+				r2.Body = body
+			}
+		}
+		// Reauthenticate tries a silent token refresh before falling back to
+		// an interactive login (see EnsureAuth), and dedupes concurrent
+		// callers against a single in-flight attempt instead of each
+		// potentially opening its own browser login.
+		if tkn2, err2 := auth.Reauthenticate(r2.Context()); err2 == nil && tkn2 != "" {
 			r2.Header.Set("Authorization", "Bearer "+tkn2)
 			return a.next.RoundTrip(r2)
 		}
