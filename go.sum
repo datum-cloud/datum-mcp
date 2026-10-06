@@ -227,8 +227,8 @@ github.com/zalando/go-keyring v0.2.8 h1:6sD/Ucpl7jNq10rM2pgqTs0sZ9V3qMrqfIIy5YPc
 github.com/zalando/go-keyring v0.2.8/go.mod h1:tsMo+VpRq5NGyKfxoBVjCuMrG47yj8cmakZDO5QGii0=
 github.com/zonedb/zonedb v1.0.3544 h1:u5a3xOaI338FclecJ/H6J7fiImVEZ/qZomJnVYIlTeM=
 github.com/zonedb/zonedb v1.0.3544/go.mod h1:h9mfHV/S6lboOkltULrbNY52cd7JZo6MbxIiqKMWPLg=
-go.datum.net/network-services-operator v0.32.1-0.20261006142506-876eaf72cf1b h1:EW2dWkWoFqH4nycawVPYQIeM40DQhJodDhR9CP4xvXk=
-go.datum.net/network-services-operator v0.32.1-0.20261006142506-876eaf72cf1b/go.mod h1:XbNdfc6aVeNcALsczJ/MJ1RiDJqE57SlPjQSquH3fzk=
+go.datum.net/network-services-operator v0.32.1 h1:AXtzJPCjNxHndKN1YOZTjkPj8KXybPFrKA2O9x3OsNw=
+go.datum.net/network-services-operator v0.32.1/go.mod h1:XbNdfc6aVeNcALsczJ/MJ1RiDJqE57SlPjQSquH3fzk=
 go.miloapis.com/locations v0.0.0-20260825185141-507ac2cbd48c h1:+BQirT3wYCgv7H2lEZtAH+dpMiWu9j/Wa+c8s4jJUIA=
 go.miloapis.com/locations v0.0.0-20260825185141-507ac2cbd48c/go.mod h1:gzfAfHhSMwl/N68k/uSNYXOKK3IOBJCdXYaBgCE3gdE=
 go.miloapis.com/milo v0.31.0 h1:gBZ9NaplTCFhgWUZJ18N38JsFDCVtdKmypwJvffSdUU=

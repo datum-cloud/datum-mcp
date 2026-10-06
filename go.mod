@@ -8,7 +8,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
-	go.datum.net/network-services-operator v0.32.1-0.20261006142506-876eaf72cf1b
+	go.datum.net/network-services-operator v0.32.1
 	golang.org/x/oauth2 v0.37.0
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.37.1
