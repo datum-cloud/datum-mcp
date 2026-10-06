@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -98,6 +99,15 @@ func GetActiveUserKey() (string, error) {
 }
 
 func GetAPIHostname() (string, error) {
+	// Checked first so DATUM_TOKEN + DATUM_API_HOSTNAME together are enough
+	// to run fully non-interactively (CI, an agent-hosted deployment, etc.):
+	// without this, DATUM_TOKEN alone was not sufficient, because every
+	// caller still needed stored credentials (from a prior interactive
+	// login) purely to learn the API hostname, even though the token itself
+	// was never going to come from that login.
+	if v := os.Getenv("DATUM_API_HOSTNAME"); v != "" {
+		return v, nil
+	}
 	creds, _, err := GetActiveCredentials()
 	if err != nil {
 		return "", err
