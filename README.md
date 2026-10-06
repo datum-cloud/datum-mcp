@@ -76,6 +76,7 @@ go build ./cmd/datum-mcp
 - `DATUM_VERBOSE` (`true` to print verbose auth logs)
 - `DATUM_USER_ID` (override user subject; otherwise from stored credentials)
 - `DATUM_ORG` (active organization for project listing)
+- `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
 
 ## Register with your MCP client
 The binary speaks MCP over stdio or streamable http. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
@@ -217,6 +218,100 @@ Every tool's `list` action accepts:
     `projects_truncated` are `true` when there are more, and `next_step` says to use the paginated `organizations`/
     `projects` list action and follow `continue` instead. `organizations` action=`set` and `projects` action=`set`
     always verify membership against the complete set regardless of size, independent of this cap.
+
+- resource (generic escape hatch)
+  - **Actions**: `list` | `get` | `create` | `update` | `delete`, same shape and semantics as every other resource tool —
+    except `iam.miloapis.com`, `billing.miloapis.com`, and `services.miloapis.com`, which are `list`/`get` only here,
+    same as their dedicated tools, regardless of toolset configuration: this generic tool is never a wider door into
+    those groups than the dedicated tool is.
+  - **Input**: adds `group` (required, e.g. `"compute.datumapis.com"`), `kind` (required, e.g. `"Workload"`), and
+    `namespace` (required if the kind is namespaced — check with `apis`) to the usual `project`/`id`/`body`/pagination/
+    `dryRun`/`resourceVersion` fields.
+  - **Behavior**: for any resource kind that doesn't have a dedicated tool. Only `*.datumapis.com`/`*.miloapis.com`
+    groups and the Gateway API groups are reachable here; everything else the control plane also exposes (core
+    Kubernetes machinery, RBAC, admission webhooks, etc.) is refused. Use `apis` (`action: "list"`) first to find a
+    kind's group and whether it's namespaced. Can itself be disabled via `DATUM_MCP_DISABLE_TOOLSETS=resource`.
+
+### IPAM (toolset `ipam`)
+Mirrors `datumctl ipam`'s own class/pool/claim/allocation grouping. All four share the usual CRUD tool shape
+(`list`/`get`/`create`/`update`/`delete`, `project`/`id`/`body`/pagination/`dryRun`/`resourceVersion`), restricted per
+kind below.
+
+- `ipclasses` — **Actions**: `list` | `get`. Cluster-scoped, operator-authored. The kinds of address space a claim can
+  name; check a class's pools (in its status) before claiming from it.
+- `ippools` — **Actions**: full. Cluster-scoped. Root pools declare a CIDR; child pools carve a sub-prefix from a
+  parent. `delete` releases a pool.
+- `ipclaims` — **Actions**: full. Namespaced (`default`). A claim names a class and a scope — never a pool, CIDR, or
+  location; the server resolves those and reports them in `status.poolRef`/`status.allocatedCIDR`. `delete` releases
+  the claim.
+- `ipallocations` — **Actions**: `list` | `get` | `delete`. Namespaced (`default`). Created by the system when a claim
+  is satisfied, never directly. `delete` releases a held allocation back to its pool — e.g. one left behind by a claim
+  released under reclaim policy Retain.
+
+### Compute (toolset `compute`)
+- `workloads` — **Actions**: full. Namespaced (`default`). The spec is deeply nested (placements, template, runtime,
+  sandbox, containers) — inspect it first with `apis` (`group: "compute.datumapis.com"`, `version: "v1alpha"`,
+  `kind: "Workload"`, `detail: "structure"`) rather than guessing the shape.
+- `instances` — **Actions**: `list` | `get`. Namespaced (`default`). Read-only: instances come from a Workload's
+  rollout, not direct creation. To change them, create/update/delete the owning workload instead.
+
+### Galactic VPC (toolset `vpc`)
+- `networks`, `subnets`, `connectors` — **Actions**: full. Namespaced (`default`). The long tail of VPC resources
+  (subnet claims, connector advertisements/classes, network policies/interfaces/contexts/bindings, etc.) doesn't have
+  a dedicated tool — reach them via the generic `resource` tool.
+
+### Activity (toolset `activity`)
+- `activity` — **Actions**: `create` (primary) | `get` | `list` | `delete`. Cluster-scoped. Query audit logs, Kubernetes
+  events, or the combined human-readable activity feed — `create` submits a query and the results come back in the
+  same response's `status.results`; nothing is persisted the way `domains`/`dnszones`/etc. are.
+  - **Input**: adds `queryType` (required: `audit` | `events` | `feed`) to the usual fields; the query parameters go in
+    `body.spec`, which differs per `queryType`:
+    - `audit` (`AuditLogQuery`): `startTime`\*, `endTime`\* (relative like `"now-7d"` or RFC3339), `filter` (CEL),
+      `limit`, `continue`.
+    - `events` (`EventQuery`, up to 60 days vs. the native 24h Events list): `startTime`\*, `endTime`\*, `namespace`,
+      `fieldSelector` (standard Kubernetes field-selector syntax, e.g. `"type=Warning"`), `limit`, `continue`.
+    - `feed` (`ActivityQuery`; also covers `datumctl activity history` — add a `spec.resource.*` filter to scope to one
+      resource): `startTime`\*, `endTime`\*, `filter` (CEL; fields: `spec.changeSource`,
+      `spec.actor.name`/`type`/`uid`, `spec.resource.apiGroup`/`kind`/`name`/`namespace`/`uid`, `spec.summary`,
+      `spec.origin.type`), `search`, `limit`, `continue`.
+  - Example: `{"queryType": "audit", "action": "create", "body": {"metadata": {"name": "recent-deletions"}, "spec": {"startTime": "now-7d", "endTime": "now", "filter": "verb == 'delete'", "limit": 100}}}`
+
+### Search (toolset `search`)
+- `search` — **Actions**: `create` (primary) | `get` | `list` | `update` | `delete`. Cluster-scoped. Same
+  create-a-query-get-synchronous-results pattern as `activity`. `create` body: `spec.query` (required),
+  `spec.limit`, `spec.targetResources` (optional `[{group,kind,version}]` to scope to specific kinds) — results come
+  back in `status.results`.
+
+### IAM (toolset `iam`) — read-only
+Write access (granting roles/permissions) is deferred pending a safety design; these cover the most common need —
+auditing who has access, not managing it.
+- `roles` — **Actions**: `list` | `get`. Namespaced (`default`). Datum IAM roles (`iam.miloapis.com`), not plain
+  Kubernetes RBAC Roles — the control plane exposes both under the same Kind name.
+- `policybindings` — **Actions**: `list` | `get`. Namespaced (`default`). Binds a Role to subjects
+  (User/Group/ServiceAccount) over a `resourceSelector`.
+
+### Services (toolset `services`)
+- `services` — **Actions**: `list` | `get`. Cluster-scoped. The platform's service catalog.
+- `serviceentitlements` — **Actions**: `list` | `get` | `create`. Cluster-scoped. `create` is how a project requests
+  access to a service — what `datumctl services enable` does: `body.spec.serviceRef.name` (required, a name from
+  `services`), `body.spec.requestMessage` (optional, for services that require provider approval). No `update`/`delete`
+  — removing a project's access to a service isn't something to expose generically here. `ServiceConsumer` (the
+  provider-side, approval-only object) is deliberately not exposed — its schema says providers never create these
+  directly.
+
+### Billing (toolset `billing`) — read-only
+Reporting, not configuration.
+- `billingaccounts` — **Actions**: `list` | `get`. Namespaced (`default`).
+- `invoices` — **Actions**: `list` | `get`. Namespaced (`default`).
+
+## Toolsets
+Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
+(comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
+`DATUM_MCP_DISABLE_TOOLSETS=billing,iam,resource`. The original tool set (organizations/projects/users/domains/
+httpproxies/httproutes/gateways/trafficprotectionpolicies/dnszones/dnsrecordsets/dnszoneclasses/apis/context) is always
+on and can't be disabled this way. `resource` is always registered by default but, unlike the others, can be disabled
+(`DATUM_MCP_DISABLE_TOOLSETS=resource`) if you want to fully close the generic escape hatch rather than rely on its
+per-group restrictions.
 
 ## Prompts
 In addition to tools, the server exposes MCP prompts for common multi-step workflows. Clients that support `prompts/list`

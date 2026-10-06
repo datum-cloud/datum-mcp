@@ -134,24 +134,56 @@ func activeOrgOrEmpty() string {
 	return o
 }
 
-// crudResource describes a single CRD-backed resource exposed as an MCP tool
-// supporting list|get|create|update|delete (or, when ReadOnly is true, just
-// list|get). Every resource tool shares this implementation so that response
-// cleaning, error handling, and descriptions only need to be correct once.
+// fullActions is the complete action set a crudResource supports when
+// Actions is left unset.
+var fullActions = []Action{ActionList, ActionGet, ActionCreate, ActionUpdate, ActionDelete}
+
+// crudResource describes a single CRD-backed resource exposed as an MCP tool.
+// Every resource tool shares this implementation so that response cleaning,
+// error handling, and descriptions only need to be correct once.
 type crudResource struct {
 	Tool      string
 	Group     string
 	Kind      string
 	Namespace string // "" for cluster-scoped resources
 	Note      string // optional extra sentence appended to the tool description
-	ReadOnly  bool
+	// Actions restricts which actions this tool supports. Leaving it nil
+	// means the full list|get|create|update|delete set; some resources are
+	// system-managed and only support a subset (e.g. list|get|delete for a
+	// kind a user can inspect and release but never directly create).
+	Actions []Action
+	// Toolset gates registration behind DATUM_MCP_DISABLE_TOOLSETS. "" means
+	// always registered (the original, pre-Phase-2 tool set).
+	Toolset string
+}
+
+func (r crudResource) allowedActions() []Action {
+	if len(r.Actions) == 0 {
+		return fullActions
+	}
+	return r.Actions
+}
+
+func (r crudResource) allows(a Action) bool {
+	for _, allowed := range r.allowedActions() {
+		if allowed == a {
+			return true
+		}
+	}
+	return false
+}
+
+func (r crudResource) readOnly() bool {
+	return !r.allows(ActionCreate) && !r.allows(ActionUpdate) && !r.allows(ActionDelete)
 }
 
 func (r crudResource) actions() string {
-	if r.ReadOnly {
-		return "list|get"
+	allowed := r.allowedActions()
+	parts := make([]string, len(allowed))
+	for i, a := range allowed {
+		parts[i] = string(a)
 	}
-	return "list|get|create|update|delete"
+	return strings.Join(parts, "|")
 }
 
 func (r crudResource) suggestValidAction() *SuggestedAction {
@@ -176,9 +208,10 @@ func (r crudResource) description() string {
 }
 
 func (r crudResource) annotations() *mcp.ToolAnnotations {
-	destructive := !r.ReadOnly
+	ro := r.readOnly()
+	destructive := !ro
 	return &mcp.ToolAnnotations{
-		ReadOnlyHint:    r.ReadOnly,
+		ReadOnlyHint:    ro,
 		DestructiveHint: &destructive,
 		IdempotentHint:  false,
 	}
@@ -196,19 +229,23 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 	if err != nil {
 		return errResult(err, nil)
 	}
-	action := strings.ToLower(strings.TrimSpace(string(in.Action)))
-	if r.ReadOnly && (action == string(ActionCreate) || action == string(ActionUpdate) || action == string(ActionDelete)) {
-		return errResult(fmt.Errorf("%s is read-only; unsupported action: %s", r.Tool, in.Action), r.suggestValidAction())
+	action := Action(strings.ToLower(strings.TrimSpace(string(in.Action))))
+	// A single check covers both "this resource doesn't support that action"
+	// and "that's not a recognized action at all": allowedActions() only
+	// ever contains the five known Action values, so an unrecognized string
+	// like "bogus" fails the same way a disallowed-but-valid action does.
+	if !r.allows(action) {
+		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
 	writeOpts := api.WriteOptions{DryRun: in.DryRun, ExpectedResourceVersion: in.ResourceVersion}
 	switch action {
-	case string(ActionList):
+	case ActionList:
 		list, err := api.FetchList(ctx, cli, r.Group, r.Kind, r.Namespace, in.ListParams.toAPIOptions())
 		if err != nil {
 			return errResult(err, nil)
 		}
 		return okResult(listEnvelope(list))
-	case string(ActionGet):
+	case ActionGet:
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
@@ -217,13 +254,13 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 			return errResult(err, nil)
 		}
 		return okResult(api.CleanObject(obj))
-	case string(ActionCreate):
+	case ActionCreate:
 		obj, err := api.CreateObject(ctx, cli, r.Group, r.Kind, r.Namespace, in.Body, writeOpts)
 		if err != nil {
 			return errResult(err, nil)
 		}
 		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
-	case string(ActionUpdate):
+	case ActionUpdate:
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
@@ -236,7 +273,7 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 			return errResult(err, nil)
 		}
 		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
-	case string(ActionDelete):
+	case ActionDelete:
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
@@ -249,6 +286,8 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 		}
 		return okResult(withDryRunNote(map[string]any{"deleted": in.ID}, in.DryRun))
 	default:
+		// Unreachable: the allows() check above already rejected anything
+		// that isn't one of these five. Kept as a defensive fallback.
 		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
 }
@@ -278,8 +317,86 @@ var crudResources = []crudResource{
 		Note: "Policies target either a Gateway or HTTPRoute via spec.targetRefs."},
 	{Tool: "dnszones", Group: "dns.networking.miloapis.com", Kind: "DNSZone", Namespace: "default"},
 	{Tool: "dnsrecordsets", Group: "dns.networking.miloapis.com", Kind: "DNSRecordSet", Namespace: "default"},
-	{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", ReadOnly: true,
+	{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", Actions: []Action{ActionList, ActionGet},
 		Note: "Cluster-scoped; lists the DNSZoneClasses available when creating a DNSZone."},
+
+	// Phase 2 additions are tagged with a Toolset so they can be disabled via
+	// DATUM_MCP_DISABLE_TOOLSETS (comma-separated, e.g. "billing,iam") without
+	// affecting the original (untagged / Toolset "") tools above, which are
+	// always registered.
+
+	// IPAM (toolset "ipam"). Mirrors datumctl's own class/pool/claim/allocation
+	// grouping: classes are operator-authored and read-only; pools and claims
+	// are the two things a user actually creates; allocations are system-
+	// created records a user can only inspect and release.
+	{Tool: "ipclasses", Group: "ipam.miloapis.com", Kind: "IPClass", Actions: []Action{ActionList, ActionGet}, Toolset: "ipam",
+		Note: "Cluster-scoped and operator-authored (read-only): the kinds of address space a claim can name. Check a class's pools in its status before claiming from it - a class with no pool can't satisfy any claim."},
+	{Tool: "ippools", Group: "ipam.miloapis.com", Kind: "IPPool", Toolset: "ipam",
+		Note: "Cluster-scoped. Root pools declare a CIDR; child pools carve a sub-prefix from a parent. 'delete' releases a pool."},
+	{Tool: "ipclaims", Group: "ipam.miloapis.com", Kind: "IPClaim", Namespace: "default", Toolset: "ipam",
+		Note: "A claim names a class (see ipclasses) and a scope - never a pool, CIDR, or location; the server resolves those and reports the result in status.poolRef/status.allocatedCIDR. 'delete' releases the claim."},
+	{Tool: "ipallocations", Group: "ipam.miloapis.com", Kind: "IPAllocation", Namespace: "default", Actions: []Action{ActionList, ActionGet, ActionDelete}, Toolset: "ipam",
+		Note: "Created by the system when a claim is satisfied, never directly - there is no create/update action. 'delete' releases a held allocation back to its pool, e.g. one left behind by a claim released under reclaim policy Retain."},
+
+	// Compute (toolset "compute"). Workload is the deeply-nested spec a user
+	// writes (placements/template/runtime/sandbox/containers); Instance is a
+	// read-only view of what that produced.
+	{Tool: "workloads", Group: "compute.datumapis.com", Kind: "Workload", Namespace: "default", Toolset: "compute",
+		Note: "The spec is deeply nested (placements, template, runtime, sandbox, containers). Before constructing a body, inspect the shape with the 'apis' tool (group=compute.datumapis.com, version=v1alpha, kind=Workload, detail=structure)."},
+	{Tool: "instances", Group: "compute.datumapis.com", Kind: "Instance", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "compute",
+		Note: "Read-only: instances come from a Workload's rollout, not direct creation. To change them, create/update/delete the owning workload instead."},
+
+	// Galactic VPC (toolset "vpc"). The long tail (subnetclaims, connector
+	// advertisements/classes, network policies/interfaces/contexts/bindings,
+	// etc.) is reachable via the generic 'resource' tool.
+	{Tool: "networks", Group: "networking.datumapis.com", Kind: "Network", Namespace: "default", Toolset: "vpc"},
+	{Tool: "subnets", Group: "networking.datumapis.com", Kind: "Subnet", Namespace: "default", Toolset: "vpc"},
+	{Tool: "connectors", Group: "networking.datumapis.com", Kind: "Connector", Namespace: "default", Toolset: "vpc"},
+
+	// Search (toolset "search"). Same create-a-query-get-synchronous-results
+	// pattern as the 'activity' tool, but a single Kind, so it's a plain
+	// crudResource rather than needing a queryType multiplexer.
+	{Tool: "search", Group: "search.miloapis.com", Kind: "ResourceSearchQuery", Toolset: "search",
+		Note: "The primary action is 'create': body.spec.query (required), body.spec.limit, body.spec.targetResources " +
+			"(optional [{group,kind,version}] to scope to specific kinds) - results come back in the same response's status.results, nothing is persisted the way domains/dnszones/etc. are."},
+
+	// IAM (toolset "iam"), read-only. Write access (granting roles/
+	// permissions) is deferred to a later phase pending a safety design -
+	// see #81. These two cover the most common agent need: auditing who has
+	// access, not managing it.
+	{Tool: "roles", Group: "iam.miloapis.com", Kind: "Role", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "iam",
+		Note: "Datum IAM roles (iam.miloapis.com), not plain Kubernetes RBAC Roles - the control plane exposes both under the same Kind name."},
+	{Tool: "policybindings", Group: "iam.miloapis.com", Kind: "PolicyBinding", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "iam",
+		Note: "Binds a Role (see roles) to subjects (User/Group/ServiceAccount) over a resourceSelector."},
+
+	// Services (toolset "services"): the platform's service catalog, and a
+	// project's own requests to use one. ServiceConsumer (the provider-side,
+	// approval-only object) is deliberately not exposed - its schema says
+	// "Providers never create these directly."
+	{Tool: "services", Group: "services.miloapis.com", Kind: "Service", Actions: []Action{ActionList, ActionGet}, Toolset: "services",
+		Note: "Cluster-scoped: the platform's service catalog. Read-only."},
+	{Tool: "serviceentitlements", Group: "services.miloapis.com", Kind: "ServiceEntitlement", Actions: []Action{ActionList, ActionGet, ActionCreate}, Toolset: "services",
+		Note: "Cluster-scoped. 'create' is how a project requests access to a service (what `datumctl services enable` does): " +
+			"body.spec.serviceRef.name (required, a name from 'services'), body.spec.requestMessage (optional, for services that require provider approval). " +
+			"No 'update'/'delete': removing a project's access to a service isn't something to expose generically here."},
+
+	// Billing (toolset "billing"), read-only: reporting, not configuration.
+	{Tool: "billingaccounts", Group: "billing.miloapis.com", Kind: "BillingAccount", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "billing"},
+	{Tool: "invoices", Group: "billing.miloapis.com", Kind: "Invoice", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "billing"},
+}
+
+// disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
+// "core" can never be disabled this way - leave the set of always-on tools
+// out of it entirely rather than special-casing it everywhere else.
+func disabledToolsets() map[string]bool {
+	set := map[string]bool{}
+	for _, t := range strings.Split(os.Getenv("DATUM_MCP_DISABLE_TOOLSETS"), ",") {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t != "" && t != "core" {
+			set[t] = true
+		}
+	}
+	return set
 }
 
 // Organization memberships tool: list|get|set
@@ -480,7 +597,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.3.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.9.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
@@ -520,12 +637,34 @@ func NewMCPServer() *mcp.Server {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, toolAPIs)
 
+	disabled := disabledToolsets()
 	for _, r := range crudResources {
+		if r.Toolset != "" && disabled[r.Toolset] {
+			continue
+		}
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        r.Tool,
 			Description: r.description(),
 			Annotations: r.annotations(),
 		}, r.handler)
+	}
+
+	if !disabled["resource"] {
+		resourceDestructive := true
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "resource",
+			Description: resourceToolDescription,
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &resourceDestructive, IdempotentHint: false},
+		}, toolResource)
+	}
+
+	if !disabled["activity"] {
+		activityDestructive := true
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "activity",
+			Description: activityToolDescription,
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &activityDestructive, IdempotentHint: false},
+		}, toolActivity)
 	}
 
 	contextDestructive := false
