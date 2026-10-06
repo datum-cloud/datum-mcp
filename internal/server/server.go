@@ -315,7 +315,10 @@ var crudResources = []crudResource{
 		Note: "An HTTPProxy backend (spec.rules[].backends[].networkService) names one of these, not a Workload directly - and a Workload never auto-creates one. " +
 			"spec.networkInterfaces.selector.matchLabels typically targets `compute.datumapis.com/workload-name: <workload-name>` to pick up that Workload's instances; spec.ports are the named ports to expose."},
 	{Tool: "httpproxies", Group: "networking.datumapis.com", Kind: "HTTPProxy", Namespace: "default",
-		Note: "To attach a custom hostname, add it to spec.hostnames (see 'get' response's status.hostnameStatuses[].dnsRecords) rather than creating a DNSRecordSet by hand - " +
+		Note: "An HTTPProxy is an Application Load Balancer. To read one, use alb_get/alb_diagnose (alb toolset) rather than its raw status: " +
+			"its top-level conditions aggregate over hostnames and name none, and some read the opposite of how they look. " +
+			"Call alb_guide before creating or changing one. " +
+			"To attach a custom hostname, add it to spec.hostnames (see 'get' response's status.hostnameStatuses[].dnsRecords) rather than creating a DNSRecordSet by hand - " +
 			"the Gateway controller auto-manages the correct DNS record for each entry in spec.hostnames, and a manually-created record for the same name will conflict with it and block certificate issuance."},
 	{Tool: "httproutes", Group: "gateway.networking.k8s.io", Kind: "HTTPRoute", Namespace: "default",
 		Note: "Targets Gateway API HTTPRoute resources."},
@@ -673,6 +676,14 @@ func NewMCPServer() *mcp.Server {
 			Description: activityToolDescription,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &activityDestructive, IdempotentHint: false},
 		}, toolActivity)
+	}
+
+	if !disabled["alb"] {
+		// Only fails if network-services-operator shipped without its
+		// embedded documents; serve everything else rather than nothing.
+		if err := registerALB(s); err != nil {
+			log.Printf("alb toolset disabled: %v", err)
+		}
 	}
 
 	contextDestructive := false

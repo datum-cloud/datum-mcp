@@ -89,6 +89,31 @@ Every `list` action accepts:
   namespaced). `iam.miloapis.com`/`billing.miloapis.com`/`services.miloapis.com` stay `list`/`get` only here too —
   this is never a wider door than the dedicated tool. Disable via `DATUM_MCP_DISABLE_TOOLSETS=resource`.
 
+### Application Load Balancers (toolset `alb`) — read-only
+An Application Load Balancer is an `HTTPProxy` plus what's attached to it (hostnames and their domains, origins,
+traffic protection, basic auth). These tools are networking's own, mounted from
+[network-services-operator](https://github.com/datum-cloud/network-services-operator) (`pkg/albagent`): the same
+diagnosis, reason catalog and product decoding the in-product assistant and `datumctl alb` use. Every one reads the
+**active project** and takes no `project` argument.
+- `alb_guide` — call with no `skill` first: how a load balancer is put together, how to read its status without
+  getting it wrong, and the skill list. Then `skill: "<name>"` loads one procedure (`alb-create`, `alb-not-serving`,
+  `hostname-not-working`, `certificate-not-issued`, `dns-delegation`, `domain-verification`, `backend-not-reachable`,
+  `edge-propagation`, `traffic-protection-triage`, `access-log-triage`). Each document arrives with a preamble mapping
+  the assistant's plan/apply onto this server: `dryRun: true`, confirm with the user, then the same call for real.
+- `alb_list` — every load balancer, worst first, with its root cause if something is wrong.
+- `alb_get` — one load balancer as the product: hostnames and their progress, routes and origins, Force HTTPS,
+  protection, basic-auth usernames (never passwords).
+- `alb_diagnose` — why one isn't working, walked down to the hostname/service/record that's actually the cause, with
+  who has to act and which skill to load. A clean result comes back `unverified`, not healthy: nothing reports whether
+  the edge can serve it yet.
+- `alb_reason_explain` — what a condition reason means; pass the condition type too (`Pending` alone has three meanings).
+- `alb_traffic_summary` — requests that actually arrived, from access logs. Needs observability access in the project;
+  reports "unavailable" rather than failing without it. No traffic is not a fault.
+
+Changes still go through the write tools (`httpproxies`, `trafficprotectionpolicies`, `domains`, `resource` for
+`SecurityPolicy`/`BackendTrafficPolicy`). Basic-auth passwords never go through this server: use
+`datumctl alb auth set <name> --user <user> --password-stdin`.
+
 ### IPAM (toolset `ipam`)
 Mirrors `datumctl ipam`'s class/pool/claim/allocation grouping.
 - `ipclasses` — `list` | `get`. Cluster-scoped, operator-authored.
@@ -132,10 +157,14 @@ users, domains, httpproxies, httproutes, gateways, trafficprotectionpolicies, dn
 dnszoneclasses, apis, context) can't be disabled this way.
 
 ## Prompts
-- `deploy-http-proxy` (`backend_service`, `backend_port`, optional `path_prefix`) — expose a backend via an
+- `deploy-http-proxy` (`backend_service`, `backend_port` — a port name, optional `path_prefix`) — expose a backend via an
   `HTTPProxy`, auto-provisioning its `Gateway`/`HTTPRoute`.
 - `configure-dns` (`domain_name`) — create a managed `DNSZone` with its default NS `DNSRecordSet`.
 - `onboard-to-project` (no args) — loop on `context` until an active organization and project are set.
+- `alb-create`, `alb-not-serving`, `alb-hostname-not-working`, `alb-certificate-not-issued`, `alb-dns-delegation`,
+  `alb-domain-verification`, `alb-backend-not-reachable`, `alb-edge-propagation`, `alb-traffic-protection-triage`,
+  `alb-access-log-triage` (optional `load_balancer`) — one per networking skill (toolset `alb`); the same text
+  `alb_guide` returns for that skill.
 
 ## Recommended workflow
 1. `context` → check what's already set up (skip to 5 if `next_step` is `null`)

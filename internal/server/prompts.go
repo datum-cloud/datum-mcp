@@ -33,7 +33,7 @@ func registerPrompts(s *mcp.Server) {
 		Description: "Expose a backend NetworkService on the public internet via an HTTPProxy.",
 		Arguments: []*mcp.PromptArgument{
 			{Name: "backend_service", Description: "Name of the NetworkService to route traffic to", Required: true},
-			{Name: "backend_port", Description: "Port (name or number) on the backend NetworkService", Required: true},
+			{Name: "backend_port", Description: "Port name declared on the backend NetworkService, e.g. 'http' (a name, not a number)", Required: true},
 			{Name: "path_prefix", Description: "URL path prefix to match (default '/')", Required: false},
 		},
 	}, deployHTTPProxyPrompt)
@@ -61,6 +61,8 @@ func deployHTTPProxyPrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.G
 	}
 	text := fmt.Sprintf(`Deploy an HTTPProxy that routes to %q:%q under path prefix %q:
 
+0. alb_guide {"skill": "alb-create"} — networking's own procedure: what to check first, the defaults to state out loud
+   (Force HTTPS, traffic protection), and dry-run then confirm with the user before every write below.
 1. organizations {"action": "list"} then {"action": "set", "name": "<org-id>"}
 2. projects {"action": "list"} then {"action": "set", "body": {"name": "<project-id>"}}
 3. networkservices {"action": "get", "id": %q} — a Workload never auto-creates its backing NetworkService (not
@@ -68,7 +70,9 @@ func deployHTTPProxyPrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.G
    networkservices {"action": "create", "body": {"metadata": {"name": %q}, "spec": {"networkInterfaces": {"selector": {"matchLabels": {"compute.datumapis.com/workload-name": "<workload-name>"}}}, "ports": [{"name": "<port-name>", "port": <port-number>, "protocol": "TCP"}]}}}
    — the port name/number must match a container port on the Workload; inspect the Workload if unsure.
 4. httpproxies {"action": "create", "body": {"metadata": {"name": "<proxy-name>"}, "spec": {"rules": [{"matches": [{"path": {"type": "PathPrefix", "value": %q}}], "backends": [{"networkService": {"name": %q, "port": %q}, "weight": 1}]}]}}}
-5. httpproxies {"action": "get", "id": "<proxy-name>"} — read status.addresses for the assigned hostname(s) and status.conditions for readiness.
+5. alb_get {"name": "<proxy-name>"} for the generated hostname, then alb_diagnose {"name": "<proxy-name>"} if anything is
+   wrong. Don't read the HTTPProxy's status.conditions yourself: they aggregate over hostnames and name none, and a clean
+   status still doesn't prove the edge is serving it yet - confirm with a request to the generated hostname.
 
 The HTTPProxy provisions its own Gateway and HTTPRoute automatically; use the
 gateways/httproutes tools only to inspect those, not to create them yourself.

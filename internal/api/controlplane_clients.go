@@ -37,6 +37,31 @@ var (
 const requestTimeout = 30 * time.Second
 
 func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Client, error) {
+	return newPrefixedClientWithScheme(ctx, basePrefix, runtime.NewScheme())
+}
+
+// newPrefixedClientWithScheme is newPrefixedClient for callers that decode
+// into typed objects rather than unstructured ones, and so need their types
+// registered.
+func newPrefixedClientWithScheme(ctx context.Context, basePrefix string, scheme *runtime.Scheme) (ctrlclient.Client, error) {
+	cfg, err := newPrefixedConfig(ctx, basePrefix)
+	if err != nil {
+		return nil, err
+	}
+	mapper, err := getOrCreateMapper(cfg)
+	if err != nil {
+		return nil, err
+	}
+	c, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme, Mapper: mapper})
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// newPrefixedConfig returns a rest.Config addressing one control plane: every
+// request carries the current token and has basePrefix prepended to its path.
+func newPrefixedConfig(ctx context.Context, basePrefix string) (*rest.Config, error) {
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return nil, err
 	}
@@ -45,7 +70,7 @@ func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Clien
 		return nil, err
 	}
 
-	cfg := &rest.Config{
+	return &rest.Config{
 		Host: "https://" + strings.TrimRight(apiHost, "/"),
 		// WrapTransport to prefix base path
 		WrapTransport: func(rt http.RoundTripper) http.RoundTripper {
@@ -58,17 +83,7 @@ func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Clien
 			authed := &authRoundTripper{next: rt}
 			return &prefixRoundTripper{base: basePrefix, next: authed}
 		},
-	}
-	mapper, err := getOrCreateMapper(cfg)
-	if err != nil {
-		return nil, err
-	}
-	scheme := runtime.NewScheme()
-	c, err := ctrlclient.New(cfg, ctrlclient.Options{Scheme: scheme, Mapper: mapper})
-	if err != nil {
-		return nil, err
-	}
-	return c, nil
+	}, nil
 }
 
 func getOrCreateMapper(cfg *rest.Config) (meta.RESTMapper, error) {
@@ -131,8 +146,31 @@ func NewProjectControlPlaneClient(ctx context.Context, project string) (ctrlclie
 	if project == "" {
 		return nil, fmt.Errorf("project is required")
 	}
-	base := "/apis/resourcemanager.miloapis.com/v1alpha1/projects/" + project + "/control-plane"
-	return newPrefixedClient(ctx, base)
+	return newPrefixedClient(ctx, projectControlPlanePrefix(project))
+}
+
+// NewProjectTypedClient is NewProjectControlPlaneClient decoding into the
+// typed objects scheme registers, for code that reads typed objects rather
+// than unstructured ones (e.g. the alb toolset).
+func NewProjectTypedClient(ctx context.Context, project string, scheme *runtime.Scheme) (ctrlclient.Client, error) {
+	if project == "" {
+		return nil, fmt.Errorf("project is required")
+	}
+	return newPrefixedClientWithScheme(ctx, projectControlPlanePrefix(project), scheme)
+}
+
+// NewProjectRESTConfig returns the rest.Config a project control-plane client
+// is built from, for code that issues its own requests against that control
+// plane's other APIs (e.g. the project logs API).
+func NewProjectRESTConfig(ctx context.Context, project string) (*rest.Config, error) {
+	if project == "" {
+		return nil, fmt.Errorf("project is required")
+	}
+	return newPrefixedConfig(ctx, projectControlPlanePrefix(project))
+}
+
+func projectControlPlanePrefix(project string) string {
+	return "/apis/resourcemanager.miloapis.com/v1alpha1/projects/" + project + "/control-plane"
 }
 
 // NewProjectHTTPClient returns an HTTP client whose transport injects Authorization and the
@@ -157,8 +195,7 @@ func NewProjectHTTPClient(ctx context.Context, project string) (*http.Client, st
 			// retry-on-429/5xx for free; add it here.
 			retried := &retryRoundTripper{next: rt}
 			authed := &authRoundTripper{next: retried}
-			base := "/apis/resourcemanager.miloapis.com/v1alpha1/projects/" + project + "/control-plane"
-			return &prefixRoundTripper{base: base, next: authed}
+			return &prefixRoundTripper{base: projectControlPlanePrefix(project), next: authed}
 		},
 	}
 	tr, err := rest.TransportFor(cfg)
