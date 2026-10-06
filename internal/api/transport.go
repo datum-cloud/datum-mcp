@@ -2,7 +2,9 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/datum-cloud/datum-mcp/internal/auth"
 )
@@ -71,4 +73,99 @@ func (a *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 // message as-is instead.
 func shouldRetryWithFreshLogin(statusCode int) bool {
 	return statusCode == http.StatusUnauthorized
+}
+
+// withResponseHeaderTimeout bounds how long a single attempt waits to start
+// receiving a response, without bounding how long reading the body then
+// takes. Unlike http.Client.Timeout (which covers the whole round trip,
+// body read included), this lets a slow-but-progressing transfer - a large
+// OpenAPI document, a long List page - finish instead of being killed
+// partway through, while still catching a truly stalled/dead connection
+// that never sends a response at all. rt is the concrete *http.Transport
+// client-go hands WrapTransport before any further wrapping; if it isn't
+// one (e.g. a caller-supplied custom RoundTripper), this is a no-op.
+func withResponseHeaderTimeout(rt http.RoundTripper, d time.Duration) http.RoundTripper {
+	if t, ok := rt.(*http.Transport); ok {
+		t.ResponseHeaderTimeout = d
+	}
+	return rt
+}
+
+const (
+	defaultMaxRetries = 5
+	retryBaseDelay    = 500 * time.Millisecond
+	retryMaxDelay     = 5 * time.Second
+)
+
+// retryRoundTripper retries a request on 429 and 5xx responses with capped
+// exponential backoff, honoring a Retry-After header when the server sends
+// one. This exists for request paths that don't already get client-go's own
+// retry-on-429/5xx (that logic lives in rest.Request, which only the
+// ctrlclient.Client path goes through - see NewProjectHTTPClient, used for
+// OpenAPI discovery via a raw *http.Client instead).
+type retryRoundTripper struct {
+	next       http.RoundTripper
+	maxRetries int
+}
+
+func (rr *retryRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	next := rr.next
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	maxRetries := rr.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = defaultMaxRetries
+	}
+
+	for attempt := 0; ; attempt++ {
+		reqAttempt := r
+		if attempt > 0 {
+			reqAttempt = r.Clone(r.Context())
+			if r.GetBody != nil {
+				if body, err := r.GetBody(); err == nil {
+					reqAttempt.Body = body
+				}
+			}
+		}
+		resp, err := next.RoundTrip(reqAttempt)
+		if err != nil {
+			return nil, err
+		}
+		if attempt >= maxRetries || !isRetryableStatus(resp.StatusCode) {
+			return resp, nil
+		}
+		wait := retryDelay(resp, attempt)
+		_ = resp.Body.Close()
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+func isRetryableStatus(code int) bool {
+	return code == http.StatusTooManyRequests || (code >= 500 && code <= 599)
+}
+
+// retryDelay returns how long to wait before the next attempt: the server's
+// Retry-After header if present (seconds or an HTTP-date), otherwise capped
+// exponential backoff.
+func retryDelay(resp *http.Response, attempt int) time.Duration {
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		if secs, err := strconv.Atoi(ra); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+		if t, err := http.ParseTime(ra); err == nil {
+			if d := time.Until(t); d > 0 {
+				return d
+			}
+		}
+	}
+	d := retryBaseDelay * time.Duration(1<<attempt)
+	if d > retryMaxDelay {
+		return retryMaxDelay
+	}
+	return d
 }
