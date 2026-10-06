@@ -255,6 +255,11 @@ kind below.
 - `instances` — **Actions**: `list` | `get`. Namespaced (`default`). Read-only: instances come from a Workload's
   rollout, not direct creation. To change them, create/update/delete the owning workload instead.
 
+### Galactic VPC (toolset `vpc`)
+- `networks`, `subnets`, `connectors` — **Actions**: full. Namespaced (`default`). The long tail of VPC resources
+  (subnet claims, connector advertisements/classes, network policies/interfaces/contexts/bindings, etc.) doesn't have
+  a dedicated tool — reach them via the generic `resource` tool.
+
 ## Toolsets
 Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
 (comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
