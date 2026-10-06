@@ -8,7 +8,7 @@ func TestIAMResourcesRegistered(t *testing.T) {
 		group string
 		kind  string
 	}{
-		{"roles", "rbac.authorization.k8s.io", "Role"},
+		{"roles", "iam.miloapis.com", "Role"},
 		{"policybindings", "iam.miloapis.com", "PolicyBinding"},
 	}
 	for _, c := range cases {
@@ -40,8 +40,8 @@ func TestServicesResourcesRegistered(t *testing.T) {
 	if entitlements.Group != "services.miloapis.com" || entitlements.Kind != "ServiceEntitlement" || entitlements.Namespace != "" {
 		t.Errorf("unexpected shape: %+v", entitlements)
 	}
-	if entitlements.actions() != "list|get|create|update|delete" {
-		t.Errorf("expected full action set (create = 'enable'), got %q", entitlements.actions())
+	if entitlements.actions() != "list|get|create" {
+		t.Errorf("expected list|get|create only (create = 'enable'; no update/delete - that would let an agent remove a project's access to a service), got %q", entitlements.actions())
 	}
 
 	for _, tool := range []string{"services", "serviceentitlements"} {

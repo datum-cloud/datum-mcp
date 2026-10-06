@@ -364,7 +364,8 @@ var crudResources = []crudResource{
 	// permissions) is deferred to a later phase pending a safety design -
 	// see #81. These two cover the most common agent need: auditing who has
 	// access, not managing it.
-	{Tool: "roles", Group: "rbac.authorization.k8s.io", Kind: "Role", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "iam"},
+	{Tool: "roles", Group: "iam.miloapis.com", Kind: "Role", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "iam",
+		Note: "Datum IAM roles (iam.miloapis.com), not plain Kubernetes RBAC Roles - the control plane exposes both under the same Kind name."},
 	{Tool: "policybindings", Group: "iam.miloapis.com", Kind: "PolicyBinding", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "iam",
 		Note: "Binds a Role (see roles) to subjects (User/Group/ServiceAccount) over a resourceSelector."},
 
@@ -374,9 +375,10 @@ var crudResources = []crudResource{
 	// "Providers never create these directly."
 	{Tool: "services", Group: "services.miloapis.com", Kind: "Service", Actions: []Action{ActionList, ActionGet}, Toolset: "services",
 		Note: "Cluster-scoped: the platform's service catalog. Read-only."},
-	{Tool: "serviceentitlements", Group: "services.miloapis.com", Kind: "ServiceEntitlement", Toolset: "services",
+	{Tool: "serviceentitlements", Group: "services.miloapis.com", Kind: "ServiceEntitlement", Actions: []Action{ActionList, ActionGet, ActionCreate}, Toolset: "services",
 		Note: "Cluster-scoped. 'create' is how a project requests access to a service (what `datumctl services enable` does): " +
-			"body.spec.serviceRef.name (required, a name from 'services'), body.spec.requestMessage (optional, for services that require provider approval)."},
+			"body.spec.serviceRef.name (required, a name from 'services'), body.spec.requestMessage (optional, for services that require provider approval). " +
+			"No 'update'/'delete': removing a project's access to a service isn't something to expose generically here."},
 
 	// Billing (toolset "billing"), read-only: reporting, not configuration.
 	{Tool: "billingaccounts", Group: "billing.miloapis.com", Kind: "BillingAccount", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "billing"},

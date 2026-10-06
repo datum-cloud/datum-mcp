@@ -285,15 +285,17 @@ kind below.
 ### IAM (toolset `iam`) — read-only
 Write access (granting roles/permissions) is deferred pending a safety design; these cover the most common need —
 auditing who has access, not managing it.
-- `roles` — **Actions**: `list` | `get`. Namespaced (`default`).
+- `roles` — **Actions**: `list` | `get`. Namespaced (`default`). Datum IAM roles (`iam.miloapis.com`), not plain
+  Kubernetes RBAC Roles — the control plane exposes both under the same Kind name.
 - `policybindings` — **Actions**: `list` | `get`. Namespaced (`default`). Binds a Role to subjects
   (User/Group/ServiceAccount) over a `resourceSelector`.
 
 ### Services (toolset `services`)
 - `services` — **Actions**: `list` | `get`. Cluster-scoped. The platform's service catalog.
-- `serviceentitlements` — **Actions**: full. Cluster-scoped. `create` is how a project requests access to a service —
-  what `datumctl services enable` does: `body.spec.serviceRef.name` (required, a name from `services`),
-  `body.spec.requestMessage` (optional, for services that require provider approval). `ServiceConsumer` (the
+- `serviceentitlements` — **Actions**: `list` | `get` | `create`. Cluster-scoped. `create` is how a project requests
+  access to a service — what `datumctl services enable` does: `body.spec.serviceRef.name` (required, a name from
+  `services`), `body.spec.requestMessage` (optional, for services that require provider approval). No `update`/`delete`
+  — removing a project's access to a service isn't something to expose generically here. `ServiceConsumer` (the
   provider-side, approval-only object) is deliberately not exposed — its schema says providers never create these
   directly.
 
