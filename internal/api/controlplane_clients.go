@@ -29,10 +29,11 @@ var (
 	sharedMapperMu sync.Mutex
 )
 
-// requestTimeout bounds a single HTTP attempt. It applies per-attempt, not
-// across client-go's own retry loop (see the rest.Config.Timeout comment
-// below), so it protects against a stalled connection without fighting that
-// retry logic.
+// requestTimeout bounds how long a single attempt waits for a response to
+// start (see withResponseHeaderTimeout), not the whole round trip including
+// body read. client-go's own retry-on-429/5xx (up to 10 attempts, honoring
+// Retry-After - see NewRequest's default in k8s.io/client-go/rest) applies
+// around this per-attempt bound, not instead of it.
 const requestTimeout = 30 * time.Second
 
 func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Client, error) {
@@ -46,17 +47,12 @@ func newPrefixedClient(ctx context.Context, basePrefix string) (ctrlclient.Clien
 
 	cfg := &rest.Config{
 		Host: "https://" + strings.TrimRight(apiHost, "/"),
-		// Bounds a single request attempt so a dead/stalled connection can't
-		// hang a tool call forever. client-go's own retry-on-429/5xx (up to
-		// 10 attempts, honoring Retry-After - see NewRequest's default in
-		// k8s.io/client-go/rest) applies around this per-attempt timeout,
-		// not instead of it.
-		Timeout: requestTimeout,
 		// WrapTransport to prefix base path
 		WrapTransport: func(rt http.RoundTripper) http.RoundTripper {
 			if rt == nil {
 				rt = http.DefaultTransport
 			}
+			rt = withResponseHeaderTimeout(rt, requestTimeout)
 			// Inject auth so first request triggers EnsureAuth (opens browser if needed),
 			// then apply the project/org/user control-plane path prefix.
 			authed := &authRoundTripper{next: rt}
@@ -155,7 +151,12 @@ func NewProjectHTTPClient(ctx context.Context, project string) (*http.Client, st
 			if rt == nil {
 				rt = http.DefaultTransport
 			}
-			authed := &authRoundTripper{next: rt}
+			rt = withResponseHeaderTimeout(rt, requestTimeout)
+			// Unlike the ctrlclient.Client path, this raw *http.Client never
+			// goes through rest.Request, so it doesn't get client-go's own
+			// retry-on-429/5xx for free; add it here.
+			retried := &retryRoundTripper{next: rt}
+			authed := &authRoundTripper{next: retried}
 			base := "/apis/resourcemanager.miloapis.com/v1alpha1/projects/" + project + "/control-plane"
 			return &prefixRoundTripper{base: base, next: authed}
 		},
@@ -164,9 +165,8 @@ func NewProjectHTTPClient(ctx context.Context, project string) (*http.Client, st
 	if err != nil {
 		return nil, "", err
 	}
-	// rest.TransportFor only builds the RoundTripper; unlike the
-	// ctrlclient.Client path (which goes through rest.HTTPClientFor and so
-	// picks up cfg.Timeout automatically), this http.Client is constructed
-	// directly, so the timeout has to be set here too.
-	return &http.Client{Transport: tr, Timeout: requestTimeout}, cfg.Host, nil
+	// No Client.Timeout: that would cover the whole round trip including
+	// body read (see withResponseHeaderTimeout). The ResponseHeaderTimeout
+	// set above already bounds a stalled/dead connection per attempt.
+	return &http.Client{Transport: tr}, cfg.Host, nil
 }
