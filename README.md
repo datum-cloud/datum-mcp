@@ -260,6 +260,50 @@ kind below.
   (subnet claims, connector advertisements/classes, network policies/interfaces/contexts/bindings, etc.) doesn't have
   a dedicated tool — reach them via the generic `resource` tool.
 
+### Activity (toolset `activity`)
+- `activity` — **Actions**: `create` (primary) | `get` | `list` | `delete`. Cluster-scoped. Query audit logs, Kubernetes
+  events, or the combined human-readable activity feed — `create` submits a query and the results come back in the
+  same response's `status.results`; nothing is persisted the way `domains`/`dnszones`/etc. are.
+  - **Input**: adds `queryType` (required: `audit` | `events` | `feed`) to the usual fields; the query parameters go in
+    `body.spec`, which differs per `queryType`:
+    - `audit` (`AuditLogQuery`): `startTime`\*, `endTime`\* (relative like `"now-7d"` or RFC3339), `filter` (CEL),
+      `limit`, `continue`.
+    - `events` (`EventQuery`, up to 60 days vs. the native 24h Events list): `startTime`\*, `endTime`\*, `namespace`,
+      `fieldSelector` (standard Kubernetes field-selector syntax, e.g. `"type=Warning"`), `limit`, `continue`.
+    - `feed` (`ActivityQuery`; also covers `datumctl activity history` — add a `spec.resource.*` filter to scope to one
+      resource): `startTime`\*, `endTime`\*, `filter` (CEL; fields: `spec.changeSource`,
+      `spec.actor.name`/`type`/`uid`, `spec.resource.apiGroup`/`kind`/`name`/`namespace`/`uid`, `spec.summary`,
+      `spec.origin.type`), `search`, `limit`, `continue`.
+  - Example: `{"queryType": "audit", "action": "create", "body": {"metadata": {"name": "recent-deletions"}, "spec": {"startTime": "now-7d", "endTime": "now", "filter": "verb == 'delete'", "limit": 100}}}`
+
+### Search (toolset `search`)
+- `search` — **Actions**: `create` (primary) | `get` | `list` | `update` | `delete`. Cluster-scoped. Same
+  create-a-query-get-synchronous-results pattern as `activity`. `create` body: `spec.query` (required),
+  `spec.limit`, `spec.targetResources` (optional `[{group,kind,version}]` to scope to specific kinds) — results come
+  back in `status.results`.
+
+### IAM (toolset `iam`) — read-only
+Write access (granting roles/permissions) is deferred pending a safety design; these cover the most common need —
+auditing who has access, not managing it.
+- `roles` — **Actions**: `list` | `get`. Namespaced (`default`). Datum IAM roles (`iam.miloapis.com`), not plain
+  Kubernetes RBAC Roles — the control plane exposes both under the same Kind name.
+- `policybindings` — **Actions**: `list` | `get`. Namespaced (`default`). Binds a Role to subjects
+  (User/Group/ServiceAccount) over a `resourceSelector`.
+
+### Services (toolset `services`)
+- `services` — **Actions**: `list` | `get`. Cluster-scoped. The platform's service catalog.
+- `serviceentitlements` — **Actions**: `list` | `get` | `create`. Cluster-scoped. `create` is how a project requests
+  access to a service — what `datumctl services enable` does: `body.spec.serviceRef.name` (required, a name from
+  `services`), `body.spec.requestMessage` (optional, for services that require provider approval). No `update`/`delete`
+  — removing a project's access to a service isn't something to expose generically here. `ServiceConsumer` (the
+  provider-side, approval-only object) is deliberately not exposed — its schema says providers never create these
+  directly.
+
+### Billing (toolset `billing`) — read-only
+Reporting, not configuration.
+- `billingaccounts` — **Actions**: `list` | `get`. Namespaced (`default`).
+- `invoices` — **Actions**: `list` | `get`. Namespaced (`default`).
+
 ## Toolsets
 Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
 (comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
