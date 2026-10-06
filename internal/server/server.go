@@ -359,6 +359,30 @@ var crudResources = []crudResource{
 	{Tool: "search", Group: "search.miloapis.com", Kind: "ResourceSearchQuery", Toolset: "search",
 		Note: "The primary action is 'create': body.spec.query (required), body.spec.limit, body.spec.targetResources " +
 			"(optional [{group,kind,version}] to scope to specific kinds) - results come back in the same response's status.results, nothing is persisted the way domains/dnszones/etc. are."},
+
+	// IAM (toolset "iam"), read-only. Write access (granting roles/
+	// permissions) is deferred to a later phase pending a safety design -
+	// see #81. These two cover the most common agent need: auditing who has
+	// access, not managing it.
+	{Tool: "roles", Group: "iam.miloapis.com", Kind: "Role", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "iam",
+		Note: "Datum IAM roles (iam.miloapis.com), not plain Kubernetes RBAC Roles - the control plane exposes both under the same Kind name."},
+	{Tool: "policybindings", Group: "iam.miloapis.com", Kind: "PolicyBinding", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "iam",
+		Note: "Binds a Role (see roles) to subjects (User/Group/ServiceAccount) over a resourceSelector."},
+
+	// Services (toolset "services"): the platform's service catalog, and a
+	// project's own requests to use one. ServiceConsumer (the provider-side,
+	// approval-only object) is deliberately not exposed - its schema says
+	// "Providers never create these directly."
+	{Tool: "services", Group: "services.miloapis.com", Kind: "Service", Actions: []Action{ActionList, ActionGet}, Toolset: "services",
+		Note: "Cluster-scoped: the platform's service catalog. Read-only."},
+	{Tool: "serviceentitlements", Group: "services.miloapis.com", Kind: "ServiceEntitlement", Actions: []Action{ActionList, ActionGet, ActionCreate}, Toolset: "services",
+		Note: "Cluster-scoped. 'create' is how a project requests access to a service (what `datumctl services enable` does): " +
+			"body.spec.serviceRef.name (required, a name from 'services'), body.spec.requestMessage (optional, for services that require provider approval). " +
+			"No 'update'/'delete': removing a project's access to a service isn't something to expose generically here."},
+
+	// Billing (toolset "billing"), read-only: reporting, not configuration.
+	{Tool: "billingaccounts", Group: "billing.miloapis.com", Kind: "BillingAccount", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "billing"},
+	{Tool: "invoices", Group: "billing.miloapis.com", Kind: "Invoice", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "billing"},
 }
 
 // disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
@@ -573,7 +597,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.8.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.9.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
