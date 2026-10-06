@@ -50,6 +50,27 @@ func TestToolResourceRejectsMissingFields(t *testing.T) {
 	}
 }
 
+func TestSensitiveGroupActionsAreReadOnly(t *testing.T) {
+	expected := []string{"iam.miloapis.com", "billing.miloapis.com", "services.miloapis.com"}
+	for _, group := range expected {
+		actions, ok := sensitiveGroupActions[group]
+		if !ok {
+			t.Errorf("expected %q to have a sensitiveGroupActions entry", group)
+			continue
+		}
+		r := crudResource{Actions: actions}
+		if r.allows(ActionCreate) || r.allows(ActionUpdate) || r.allows(ActionDelete) {
+			t.Errorf("group %q: expected resource tool restriction to be read-only, got allowed actions %v", group, actions)
+		}
+		if !r.allows(ActionList) || !r.allows(ActionGet) {
+			t.Errorf("group %q: expected list/get to remain allowed, got %v", group, actions)
+		}
+	}
+	if len(sensitiveGroupActions) != len(expected) {
+		t.Errorf("expected exactly %d sensitive groups, got %d: %v", len(expected), len(sensitiveGroupActions), sensitiveGroupActions)
+	}
+}
+
 func TestToolResourceRejectsDisallowedGroup(t *testing.T) {
 	_, out, err := toolResource(context.Background(), nil, GenericResourceInput{
 		Group: "rbac.authorization.k8s.io",

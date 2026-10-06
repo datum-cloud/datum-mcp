@@ -220,21 +220,26 @@ Every tool's `list` action accepts:
     always verify membership against the complete set regardless of size, independent of this cap.
 
 - resource (generic escape hatch)
-  - **Actions**: `list` | `get` | `create` | `update` | `delete`, same shape and semantics as every other resource tool.
+  - **Actions**: `list` | `get` | `create` | `update` | `delete`, same shape and semantics as every other resource tool —
+    except `iam.miloapis.com`, `billing.miloapis.com`, and `services.miloapis.com`, which are `list`/`get` only here,
+    same as their dedicated tools, regardless of toolset configuration: this generic tool is never a wider door into
+    those groups than the dedicated tool is.
   - **Input**: adds `group` (required, e.g. `"compute.datumapis.com"`), `kind` (required, e.g. `"Workload"`), and
     `namespace` (required if the kind is namespaced — check with `apis`) to the usual `project`/`id`/`body`/pagination/
     `dryRun`/`resourceVersion` fields.
   - **Behavior**: for any resource kind that doesn't have a dedicated tool. Only `*.datumapis.com`/`*.miloapis.com`
     groups and the Gateway API groups are reachable here; everything else the control plane also exposes (core
     Kubernetes machinery, RBAC, admission webhooks, etc.) is refused. Use `apis` (`action: "list"`) first to find a
-    kind's group and whether it's namespaced.
+    kind's group and whether it's namespaced. Can itself be disabled via `DATUM_MCP_DISABLE_TOOLSETS=resource`.
 
 ## Toolsets
 Some curated resource tools are grouped into optional toolsets you can turn off with `DATUM_MCP_DISABLE_TOOLSETS`
 (comma-separated, case-insensitive) if you want a leaner tool list for a given agent — e.g.
-`DATUM_MCP_DISABLE_TOOLSETS=billing,iam`. The original tool set (organizations/projects/users/domains/httpproxies/
-httproutes/gateways/trafficprotectionpolicies/dnszones/dnsrecordsets/dnszoneclasses/apis/context/resource) is always on
-and can't be disabled this way.
+`DATUM_MCP_DISABLE_TOOLSETS=billing,iam,resource`. The original tool set (organizations/projects/users/domains/
+httpproxies/httproutes/gateways/trafficprotectionpolicies/dnszones/dnsrecordsets/dnszoneclasses/apis/context) is always
+on and can't be disabled this way. `resource` is always registered by default but, unlike the others, can be disabled
+(`DATUM_MCP_DISABLE_TOOLSETS=resource`) if you want to fully close the generic escape hatch rather than rely on its
+per-group restrictions.
 
 ## Prompts
 In addition to tools, the server exposes MCP prompts for common multi-step workflows. Clients that support `prompts/list`

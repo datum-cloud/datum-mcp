@@ -590,12 +590,14 @@ func NewMCPServer() *mcp.Server {
 		}, r.handler)
 	}
 
-	resourceDestructive := true
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "resource",
-		Description: resourceToolDescription,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &resourceDestructive, IdempotentHint: false},
-	}, toolResource)
+	if !disabled["resource"] {
+		resourceDestructive := true
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "resource",
+			Description: resourceToolDescription,
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &resourceDestructive, IdempotentHint: false},
+		}, toolResource)
+	}
 
 	contextDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
