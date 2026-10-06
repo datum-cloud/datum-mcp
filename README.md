@@ -9,7 +9,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 An MCP server for Datum Cloud. Gives an agent tools to manage organizations/projects, networking (domains, HTTP
-proxies/routes, gateways, traffic protection policies, DNS), compute workloads, IP address management, Galactic VPC,
+proxies/routes, gateways, traffic protection policies, DNS), Application Load Balancer diagnosis and guidance (networking's
+own tools and skills), compute workloads, IP address management, Galactic VPC,
 IAM/billing/services, audit/activity search, and a generic escape hatch for any other Datum-managed resource. Auth is
 OAuth 2.1 (PKCE) with system-keychain token storage. Speaks MCP over stdio or streamable HTTP.
 
