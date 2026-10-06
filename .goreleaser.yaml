@@ -1,0 +1,67 @@
+# For more information on configuring GoReleaser, refer to the documentation:
+# https://goreleaser.com
+#
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: datum-mcp
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/datum-mcp
+    binary: datum-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+# Raw binaries, not compressed archives: install.sh downloads
+# datum-mcp_<os>_<arch>[.exe] directly, matching Go's own GOOS/GOARCH values
+# (lowercase), with no intermediate tar.gz/zip to extract. The "binary"
+# format appends the source binary's own extension (.exe on windows)
+# automatically - do not also add it in the name_template below.
+archives:
+  - formats: ["binary"]
+    name_template: >-
+      datum-mcp_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  extra_files:
+    - glob: scripts/install.sh
+
+# Publishes a Homebrew formula to datum-cloud/homebrew-tap on every release.
+# Needs RELEASE_BOT_APP_ID / RELEASE_BOT_APP_PRIVATE_KEY secrets on this repo
+# (a GitHub App installed on both datum-mcp and homebrew-tap) to actually
+# push there - see .github/workflows/release.yml, which skips this step
+# entirely until those secrets exist rather than failing the release.
+brews:
+  - commit_author:
+      name: Datum Release Bot
+      email: releases@datum.net
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    directory: Formula
+    homepage: "https://www.datum.net/"
+    description: "MCP server for Datum Cloud - gives AI agents tools to manage your network infrastructure."
+    repository:
+      owner: datum-cloud
+      name: homebrew-tap
+      branch: main
