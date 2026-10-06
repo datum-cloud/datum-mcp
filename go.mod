@@ -3,7 +3,7 @@ module github.com/datum-cloud/datum-mcp
 go 1.26.0
 
 require (
-	github.com/coreos/go-oidc/v3 v3.18.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
