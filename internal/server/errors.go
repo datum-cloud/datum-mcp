@@ -56,3 +56,10 @@ func suggestListProjects() *SuggestedAction {
 func suggestActions(tool, actions string) *SuggestedAction {
 	return &SuggestedAction{Tool: tool, Action: actions}
 }
+
+// suggestGet is the recovery action for a resourceVersion conflict on
+// update/delete: re-fetch the resource to get its current resourceVersion
+// and retry with that.
+func suggestGet(tool, id string) *SuggestedAction {
+	return &SuggestedAction{Tool: tool, Action: "get", Args: map[string]any{"id": id}}
+}

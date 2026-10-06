@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -42,26 +43,49 @@ func FetchObject(ctx context.Context, cli ctrlclient.Client, group, kind, namesp
 	return &obj, nil
 }
 
-func FetchList(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string) (*unstructured.UnstructuredList, error) {
+func FetchList(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string, opts ListOptions) (*unstructured.UnstructuredList, error) {
 	_, listGVK, err := resolveGVKs(group, kind)
 	if err != nil {
 		return nil, err
 	}
+	listOpts, err := opts.toListOpts()
+	if err != nil {
+		return nil, err
+	}
+	if namespace != "" {
+		listOpts = append(listOpts, ctrlclient.InNamespace(namespace))
+	}
 	var list unstructured.UnstructuredList
 	list.SetGroupVersionKind(listGVK)
-	if namespace != "" {
-		if err := cli.List(ctx, &list, ctrlclient.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := cli.List(ctx, &list); err != nil {
-			return nil, err
-		}
+	if err := cli.List(ctx, &list, listOpts...); err != nil {
+		return nil, err
 	}
 	return &list, nil
 }
 
-func CreateObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string, in any) (*unstructured.Unstructured, error) {
+// FetchAllItems fetches every item of a kind across all pages, following the
+// continuation token until the server reports none remain. Use this only
+// where correctness requires seeing the complete set regardless of size
+// (e.g. membership verification) — everywhere else, prefer FetchList with
+// caller-controlled pagination so a single tool call can't be made to pull
+// an unbounded collection into model context.
+func FetchAllItems(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string) ([]unstructured.Unstructured, error) {
+	var all []unstructured.Unstructured
+	cont := ""
+	for {
+		list, err := FetchList(ctx, cli, group, kind, namespace, ListOptions{Limit: MaxListLimit, Continue: cont})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, list.Items...)
+		cont = list.GetContinue()
+		if cont == "" {
+			return all, nil
+		}
+	}
+}
+
+func CreateObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string, in any, opts WriteOptions) (*unstructured.Unstructured, error) {
 	objGVK, _, err := resolveGVKs(group, kind)
 	if err != nil {
 		return nil, err
@@ -74,7 +98,7 @@ func CreateObject(ctx context.Context, cli ctrlclient.Client, group, kind, names
 	if namespace != "" {
 		obj.SetNamespace(namespace)
 	}
-	if err := cli.Create(ctx, &obj); err != nil {
+	if err := cli.Create(ctx, &obj, opts.createOpts()...); err != nil {
 		return nil, err
 	}
 	return &obj, nil
@@ -106,7 +130,7 @@ func mergeJSON(dst, patch map[string]any) map[string]any {
 	return out
 }
 
-func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string, in any) (*unstructured.Unstructured, error) {
+func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string, in any, opts WriteOptions) (*unstructured.Unstructured, error) {
 	objGVK, _, err := resolveGVKs(group, kind)
 	if err != nil {
 		return nil, err
@@ -115,6 +139,9 @@ func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, n
 	obj.SetGroupVersionKind(objGVK)
 	if err := cli.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: name}, &obj); err != nil {
 		return nil, err
+	}
+	if opts.ExpectedResourceVersion != "" && obj.GetResourceVersion() != opts.ExpectedResourceVersion {
+		return nil, &ConflictError{Kind: kind, Name: name}
 	}
 	var patch unstructured.Unstructured
 	if err := assignJSON(&patch.Object, in); err != nil {
@@ -133,13 +160,16 @@ func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, n
 			return nil, err
 		}
 	}
-	if err := cli.Update(ctx, &obj); err != nil {
+	if err := cli.Update(ctx, &obj, opts.updateOpts()...); err != nil {
+		if apierrors.IsConflict(err) {
+			return nil, &ConflictError{Kind: kind, Name: name}
+		}
 		return nil, err
 	}
 	return &obj, nil
 }
 
-func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string) error {
+func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string, opts WriteOptions) error {
 	objGVK, _, err := resolveGVKs(group, kind)
 	if err != nil {
 		return err
@@ -150,7 +180,13 @@ func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, names
 		obj.SetNamespace(namespace)
 	}
 	obj.SetName(name)
-	return cli.Delete(ctx, &obj)
+	if err := cli.Delete(ctx, &obj, opts.deleteOpts()...); err != nil {
+		if apierrors.IsConflict(err) {
+			return &ConflictError{Kind: kind, Name: name}
+		}
+		return err
+	}
+	return nil
 }
 
 // Discovery: CRD schema via OpenAPI v3 direct path: /openapi/v3/apis/<group>/<version>[/<kind>]

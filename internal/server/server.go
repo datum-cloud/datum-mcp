@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,6 +28,33 @@ const (
 	ActionDelete Action = "delete"
 )
 
+// ListParams is embedded in every tool input that supports a 'list' action.
+// All fields are ignored for other actions.
+type ListParams struct {
+	Limit         int64  `json:"limit,omitempty" jsonschema:"Max items to return (list only); clamped to 500, default 100."`
+	Continue      string `json:"continue,omitempty" jsonschema:"Continuation token from a previous list response's 'continue' field, to fetch the next page (list only)."`
+	LabelSelector string `json:"labelSelector,omitempty" jsonschema:"kubectl-style label selector, e.g. 'team=edge,env!=prod' (list only)."`
+	FieldSelector string `json:"fieldSelector,omitempty" jsonschema:"kubectl-style field selector, e.g. 'metadata.name=foo'; only fields the resource registers as selectable are supported (list only)."`
+}
+
+func (p ListParams) toAPIOptions() api.ListOptions {
+	return api.ListOptions{
+		Limit:         p.Limit,
+		Continue:      p.Continue,
+		LabelSelector: p.LabelSelector,
+		FieldSelector: p.FieldSelector,
+	}
+}
+
+// listEnvelope is the standard shape every 'list' action returns.
+func listEnvelope(list *unstructured.UnstructuredList) map[string]any {
+	return map[string]any{
+		"items":    api.CleanList(list),
+		"count":    len(list.Items),
+		"continue": list.GetContinue(),
+	}
+}
+
 // RoutedInput is the shared input shape for every CRD-backed CRUD tool.
 type RoutedInput struct {
 	// Optional per-request project override; if empty, uses the active project.
@@ -37,6 +65,11 @@ type RoutedInput struct {
 	ID string `json:"id,omitempty" jsonschema:"Resource name; required for get, update, and delete."`
 	// Body is the request payload for create/update
 	Body map[string]any `json:"body,omitempty" jsonschema:"Resource manifest, e.g. {\"metadata\":{...},\"spec\":{...}}; required for create. For update, body.spec is deep-merged into the existing spec field-by-field: a null field deletes it, nested objects merge recursively, and arrays/scalars replace wholesale — omitted fields are left untouched."`
+	ListParams
+	// DryRun validates create/update/delete server-side without persisting the change.
+	DryRun bool `json:"dryRun,omitempty" jsonschema:"If true (create/update/delete only), validate and run admission without persisting the change; the response shows what would happen."`
+	// ResourceVersion, for update/delete only: enables optimistic concurrency.
+	ResourceVersion string `json:"resourceVersion,omitempty" jsonschema:"For update/delete only: the resourceVersion from a prior 'get'. If the resource has changed since, the call fails instead of overwriting it."`
 }
 
 type APIInfoInput struct {
@@ -52,16 +85,21 @@ type ProjectsInput struct {
 	Action string         `json:"action" jsonschema:"One of list|get|set|create."`
 	Org    string         `json:"org,omitempty" jsonschema:"Optional organization id; defaults to DATUM_ORG env or the active organization."`
 	Body   map[string]any `json:"body,omitempty" jsonschema:"For action=set: {\"name\": \"<project-id>\"}. For action=create: a Project manifest."`
+	ListParams
+	// DryRun applies to action=create only.
+	DryRun bool `json:"dryRun,omitempty" jsonschema:"For action=create only: validate without persisting."`
 }
 
 type OrgMembershipsInput struct {
 	Action string `json:"action" jsonschema:"One of list|get|set."`
 	Name   string `json:"name,omitempty" jsonschema:"Organization id; required for action=set, verified against your memberships."`
+	ListParams
 }
 
 type UsersInput struct {
 	Action string `json:"action" jsonschema:"Currently only 'list' is supported."`
 	Org    string `json:"org,omitempty" jsonschema:"Optional organization id; defaults to DATUM_ORG env or the active organization."`
+	ListParams
 }
 
 func resolveProjectName(override string) (string, error) {
@@ -79,14 +117,21 @@ func resolveOrgName(override string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
-	if v := os.Getenv("DATUM_ORG"); v != "" {
+	if v := activeOrgOrEmpty(); v != "" {
 		return v, nil
 	}
-	o, _ := org.GetActive()
-	if o == "" {
-		return "", fmt.Errorf("no active organization set; set DATUM_ORG env, pass 'org', or call organizations action set")
+	return "", fmt.Errorf("no active organization set; set DATUM_ORG env, pass 'org', or call organizations action set")
+}
+
+// activeOrgOrEmpty mirrors resolveOrgName's precedence (DATUM_ORG env, then
+// the persisted active org) but never errors, returning "" when unset. Used
+// by the 'context' tool, which reports state rather than requiring it.
+func activeOrgOrEmpty() string {
+	if v := os.Getenv("DATUM_ORG"); v != "" {
+		return v
 	}
-	return o, nil
+	o, _ := org.GetActive()
+	return o
 }
 
 // crudResource describes a single CRD-backed resource exposed as an MCP tool
@@ -117,7 +162,10 @@ func (r crudResource) description() string {
 	d := fmt.Sprintf(
 		"Manage %s resources (%s/%s). Requires an active project (set via the 'projects' tool, action=set), or pass 'project'. "+
 			"Typical sequence: organizations set -> projects set -> %s list to discover existing resources, then get/create/update/delete. "+
-			"Actions: %s. Fields: project (optional, overrides active project), id (required for get/update/delete), body (required for create/update). "+
+			"Actions: %s. Fields: project (optional, overrides active project), id (required for get/update/delete), body (required for create/update), "+
+			"limit/continue/labelSelector/fieldSelector (list only, paginated: default 100, max 500 per page), "+
+			"dryRun (create/update/delete: validate without persisting), resourceVersion (update/delete: optimistic concurrency, from a prior get; "+
+			"a stale value fails with a conflict error instead of overwriting). "+
 			"If you get \"no active project set\", call 'projects' with action=list then action=set.",
 		r.Kind, r.Group, r.Kind, r.Tool, r.actions(),
 	)
@@ -152,13 +200,14 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 	if r.ReadOnly && (action == string(ActionCreate) || action == string(ActionUpdate) || action == string(ActionDelete)) {
 		return errResult(fmt.Errorf("%s is read-only; unsupported action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
+	writeOpts := api.WriteOptions{DryRun: in.DryRun, ExpectedResourceVersion: in.ResourceVersion}
 	switch action {
 	case string(ActionList):
-		list, err := api.FetchList(ctx, cli, r.Group, r.Kind, r.Namespace)
+		list, err := api.FetchList(ctx, cli, r.Group, r.Kind, r.Namespace, in.ListParams.toAPIOptions())
 		if err != nil {
 			return errResult(err, nil)
 		}
-		return okResult(map[string]any{"items": api.CleanList(list), "count": len(list.Items)})
+		return okResult(listEnvelope(list))
 	case string(ActionGet):
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
@@ -169,31 +218,49 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 		}
 		return okResult(api.CleanObject(obj))
 	case string(ActionCreate):
-		obj, err := api.CreateObject(ctx, cli, r.Group, r.Kind, r.Namespace, in.Body)
+		obj, err := api.CreateObject(ctx, cli, r.Group, r.Kind, r.Namespace, in.Body, writeOpts)
 		if err != nil {
 			return errResult(err, nil)
 		}
-		return okResult(api.CleanObject(obj))
+		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
 	case string(ActionUpdate):
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
-		obj, err := api.UpdateObjectSpec(ctx, cli, r.Group, r.Kind, r.Namespace, in.ID, in.Body)
+		obj, err := api.UpdateObjectSpec(ctx, cli, r.Group, r.Kind, r.Namespace, in.ID, in.Body, writeOpts)
 		if err != nil {
+			var conflict *api.ConflictError
+			if errors.As(err, &conflict) {
+				return errResult(err, suggestGet(r.Tool, in.ID))
+			}
 			return errResult(err, nil)
 		}
-		return okResult(api.CleanObject(obj))
+		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
 	case string(ActionDelete):
 		if in.ID == "" {
 			return errResult(fmt.Errorf("invalid params: id is required"), nil)
 		}
-		if err := api.DeleteObject(ctx, cli, r.Group, r.Kind, r.Namespace, in.ID); err != nil {
+		if err := api.DeleteObject(ctx, cli, r.Group, r.Kind, r.Namespace, in.ID, writeOpts); err != nil {
+			var conflict *api.ConflictError
+			if errors.As(err, &conflict) {
+				return errResult(err, suggestGet(r.Tool, in.ID))
+			}
 			return errResult(err, nil)
 		}
-		return okResult(map[string]string{"deleted": in.ID})
+		return okResult(withDryRunNote(map[string]any{"deleted": in.ID}, in.DryRun))
 	default:
 		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
+}
+
+// withDryRunNote tags a successful write response as hypothetical when the
+// caller asked for DryRun, so the agent doesn't mistake it for a persisted
+// change.
+func withDryRunNote(result map[string]any, dryRun bool) map[string]any {
+	if dryRun {
+		result["dryRun"] = true
+	}
+	return result
 }
 
 // crudResources is the declarative list of every CRD-backed resource tool.
@@ -238,22 +305,25 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 	switch a {
 	case "list":
-		list, err := api.FetchList(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "")
+		list, err := api.FetchList(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "", in.ListParams.toAPIOptions())
 		if err != nil {
 			return errResult(err, nil)
 		}
-		return okResult(map[string]any{"items": api.CleanList(list), "count": len(list.Items)})
+		return okResult(listEnvelope(list))
 	case "set":
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			return errResult(fmt.Errorf("invalid params: name is required"), nil)
 		}
-		memList, err := api.FetchList(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "")
+		// Membership verification always checks the full set, independent of
+		// any list-only pagination the caller passed in, and must not miss a
+		// membership just because the caller has more than one page of them.
+		memItems, err := api.FetchAllItems(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "")
 		if err != nil {
 			return errResult(err, nil)
 		}
 		allowed := false
-		for _, it := range memList.Items {
+		for _, it := range memItems {
 			orgName, _, _ := unstructured.NestedString(it.Object, "spec", "organizationRef", "name")
 			if strings.EqualFold(orgName, name) {
 				allowed = true
@@ -294,31 +364,34 @@ func toolProjects(ctx context.Context, _ *mcp.CallToolRequest, in ProjectsInput)
 	}
 	switch a {
 	case "list":
-		list, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "Project", "")
+		list, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "Project", "", in.ListParams.toAPIOptions())
 		if err != nil {
 			return errResult(err, nil)
 		}
-		return okResult(map[string]any{"items": api.CleanList(list), "count": len(list.Items)})
+		return okResult(listEnvelope(list))
 	case "create":
 		if in.Body == nil {
 			return errResult(fmt.Errorf("invalid params: body is required for create"), nil)
 		}
-		obj, err := api.CreateObject(ctx, cli, "resourcemanager.miloapis.com", "Project", "", in.Body)
+		obj, err := api.CreateObject(ctx, cli, "resourcemanager.miloapis.com", "Project", "", in.Body, api.WriteOptions{DryRun: in.DryRun})
 		if err != nil {
 			return errResult(err, nil)
 		}
-		return okResult(api.CleanObject(obj))
+		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
 	case "set":
 		name, _ := in.Body["name"].(string)
 		if name == "" {
 			return errResult(fmt.Errorf("invalid params: body.name is required"), nil)
 		}
-		plist, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "Project", "")
+		// Membership verification always checks the full set, independent of
+		// any list-only pagination the caller passed in, and must not miss a
+		// project just because the org has more than one page of them.
+		pitems, err := api.FetchAllItems(ctx, cli, "resourcemanager.miloapis.com", "Project", "")
 		if err != nil {
 			return errResult(err, nil)
 		}
 		found := false
-		for _, it := range plist.Items {
+		for _, it := range pitems {
 			if strings.EqualFold(it.GetName(), name) {
 				found = true
 				break
@@ -358,11 +431,11 @@ func toolUsers(ctx context.Context, _ *mcp.CallToolRequest, in UsersInput) (*mcp
 	}
 	switch a {
 	case "list":
-		list, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "OrganizationMembership", "organization-"+orgName)
+		list, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "OrganizationMembership", "organization-"+orgName, in.ListParams.toAPIOptions())
 		if err != nil {
 			return errResult(err, nil)
 		}
-		return okResult(map[string]any{"items": api.CleanList(list), "count": len(list.Items)})
+		return okResult(listEnvelope(list))
 	default:
 		return errResult(fmt.Errorf("unsupported users action: %s", in.Action), suggestActions("users", "list"))
 	}
@@ -407,14 +480,15 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.2.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.3.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "organizations",
 		Description: "Discover and switch the active Datum Cloud organization. Most other tools require an active organization " +
-			"(directly, via 'org', or via DATUM_ORG env). Actions: list (your organization memberships) | get (currently active org) | " +
-			"set (name: '<org-id>', verified against your memberships). Typical sequence: list -> pick an org -> set. " +
+			"(directly, via 'org', or via DATUM_ORG env). Actions: list (your organization memberships, paginated: default 100/page, " +
+			"max 500; limit/continue/labelSelector/fieldSelector) | get (currently active org) | set (name: '<org-id>', verified against " +
+			"your memberships). Typical sequence: list -> pick an org -> set. " +
 			"If a tool fails with \"no active organization set\", call this tool with action=list, choose one, then action=set.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &notDestructive, IdempotentHint: true},
 	}, toolOrganizationMemberships)
@@ -422,16 +496,18 @@ func NewMCPServer() *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "projects",
 		Description: "Discover, switch, and create Datum Cloud projects within an organization. Most resource tools (domains, dnszones, etc.) " +
-			"require an active project. Actions: list (org required, via 'org' field or active org) | get (currently active project) | " +
-			"set (body.name: '<project-id>', verified to exist in the org) | create (body: Project manifest). " +
+			"require an active project. Actions: list (org required, via 'org' field or active org; paginated: default 100/page, max 500; " +
+			"limit/continue/labelSelector/fieldSelector) | get (currently active project) | set (body.name: '<project-id>', verified to exist " +
+			"in the org) | create (body: Project manifest; dryRun to validate without persisting). " +
 			"Typical sequence: organizations set -> projects list -> projects set. " +
 			"If a tool fails with \"no active project set\", call this tool with action=list then action=set.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &notDestructive, IdempotentHint: false},
 	}, toolProjects)
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "users",
-		Description: "List organization memberships (users) for an organization. Requires an active organization, or pass 'org'. Actions: list.",
+		Name: "users",
+		Description: "List organization memberships (users) for an organization. Requires an active organization, or pass 'org'. " +
+			"Actions: list (paginated: default 100/page, max 500; limit/continue/labelSelector/fieldSelector).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, toolUsers)
 
@@ -451,6 +527,15 @@ func NewMCPServer() *mcp.Server {
 			Annotations: r.annotations(),
 		}, r.handler)
 	}
+
+	contextDestructive := false
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "context",
+		Description: contextToolDescription,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &contextDestructive, IdempotentHint: true},
+	}, toolContext)
+
+	registerPrompts(s)
 
 	return s
 }

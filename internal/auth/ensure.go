@@ -15,6 +15,25 @@ func tokenFromEnv() (string, bool) {
 	return "", false
 }
 
+// CheckAuth reports whether a usable token is already available, without
+// running the interactive login flow on a miss. Unlike EnsureAuth, this never
+// opens a browser: it's for callers (like the 'context' discovery tool) that
+// want to report auth status rather than force it.
+func CheckAuth(ctx context.Context) (token string, ok bool) {
+	if tok, ok := tokenFromEnv(); ok {
+		return tok, true
+	}
+	ts, err := authutil.GetTokenSource(ctx)
+	if err != nil || ts == nil {
+		return "", false
+	}
+	t, err := ts.Token()
+	if err != nil || t == nil || t.AccessToken == "" {
+		return "", false
+	}
+	return t.AccessToken, true
+}
+
 func EnsureAuth(ctx context.Context) (string, error) {
 	// 1) Env var overrides everything.
 	if tok, ok := tokenFromEnv(); ok {
