@@ -311,7 +311,12 @@ func withDryRunNote(result map[string]any, dryRun bool) map[string]any {
 // stopgap for.
 var crudResources = []crudResource{
 	{Tool: "domains", Group: "networking.datumapis.com", Kind: "Domain", Namespace: "default"},
-	{Tool: "httpproxies", Group: "networking.datumapis.com", Kind: "HTTPProxy", Namespace: "default"},
+	{Tool: "networkservices", Group: "networking.datumapis.com", Kind: "NetworkService", Namespace: "default",
+		Note: "An HTTPProxy backend (spec.rules[].backends[].networkService) names one of these, not a Workload directly - and a Workload never auto-creates one. " +
+			"spec.networkInterfaces.selector.matchLabels typically targets `compute.datumapis.com/workload-name: <workload-name>` to pick up that Workload's instances; spec.ports are the named ports to expose."},
+	{Tool: "httpproxies", Group: "networking.datumapis.com", Kind: "HTTPProxy", Namespace: "default",
+		Note: "To attach a custom hostname, add it to spec.hostnames (see 'get' response's status.hostnameStatuses[].dnsRecords) rather than creating a DNSRecordSet by hand - " +
+			"the Gateway controller auto-manages the correct DNS record for each entry in spec.hostnames, and a manually-created record for the same name will conflict with it and block certificate issuance."},
 	{Tool: "httproutes", Group: "gateway.networking.k8s.io", Kind: "HTTPRoute", Namespace: "default",
 		Note: "Targets Gateway API HTTPRoute resources."},
 	{Tool: "gateways", Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: "default",

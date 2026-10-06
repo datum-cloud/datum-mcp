@@ -18,6 +18,15 @@ import (
 // gateways/httproutes/dnsrecordsets tools are for inspecting (and, for
 // dnsrecordsets, adding records beyond the defaults), not for driving
 // creation themselves.
+//
+// One thing that isn't owned-child automatic, confirmed against a live org:
+// a Workload never auto-creates the NetworkService an HTTPProxy needs as a
+// backend, including on redeploy - that's a separate resource an agent must
+// create (or verify still exists) itself. And a custom hostname on an
+// HTTPProxy belongs in its own spec.hostnames, not a hand-created
+// DNSRecordSet: the Gateway controller auto-manages the DNS record for each
+// spec.hostnames entry, and a manually-created record for the same name
+// conflicts with it and silently blocks certificate issuance.
 func registerPrompts(s *mcp.Server) {
 	s.AddPrompt(&mcp.Prompt{
 		Name:        "deploy-http-proxy",
@@ -54,14 +63,22 @@ func deployHTTPProxyPrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.G
 
 1. organizations {"action": "list"} then {"action": "set", "name": "<org-id>"}
 2. projects {"action": "list"} then {"action": "set", "body": {"name": "<project-id>"}}
-3. httpproxies {"action": "create", "body": {"metadata": {"name": "<proxy-name>"}, "spec": {"rules": [{"matches": [{"path": {"type": "PathPrefix", "value": %q}}], "backends": [{"networkService": {"name": %q, "port": %q}, "weight": 1}]}]}}}
-4. httpproxies {"action": "get", "id": "<proxy-name>"} — read status.addresses for the assigned hostname(s) and status.conditions for readiness.
+3. networkservices {"action": "get", "id": %q} — a Workload never auto-creates its backing NetworkService (not
+   even on redeploy), so confirm one actually exists before creating the HTTPProxy. If it 404s, create it first:
+   networkservices {"action": "create", "body": {"metadata": {"name": %q}, "spec": {"networkInterfaces": {"selector": {"matchLabels": {"compute.datumapis.com/workload-name": "<workload-name>"}}}, "ports": [{"name": "<port-name>", "port": <port-number>, "protocol": "TCP"}]}}}
+   — the port name/number must match a container port on the Workload; inspect the Workload if unsure.
+4. httpproxies {"action": "create", "body": {"metadata": {"name": "<proxy-name>"}, "spec": {"rules": [{"matches": [{"path": {"type": "PathPrefix", "value": %q}}], "backends": [{"networkService": {"name": %q, "port": %q}, "weight": 1}]}]}}}
+5. httpproxies {"action": "get", "id": "<proxy-name>"} — read status.addresses for the assigned hostname(s) and status.conditions for readiness.
 
 The HTTPProxy provisions its own Gateway and HTTPRoute automatically; use the
 gateways/httproutes tools only to inspect those, not to create them yourself.
 
-If you also want a custom domain attached, use the domains tool to register
-and verify it, then update the proxy's routing once it's addressable.`, backendService, backendPort, pathPrefix, pathPrefix, backendService, backendPort)
+If you also want a custom domain attached: register and verify it with the domains tool, then add it to the
+HTTPProxy's own spec.hostnames (httpproxies {"action": "update", "id": "<proxy-name>", "body": {"spec": {"hostnames": ["<custom-domain>"]}}}).
+Do NOT create a DNSRecordSet for it yourself — the Gateway controller auto-manages the correct DNS record for
+every entry in spec.hostnames (visible in a subsequent 'get's status.hostnameStatuses[].dnsRecords), and a
+manually-created record for the same name conflicts with it and silently blocks certificate issuance.`,
+		backendService, backendPort, pathPrefix, backendService, backendService, pathPrefix, backendService, backendPort)
 	return &mcp.GetPromptResult{
 		Description: "Step-by-step: deploy an HTTPProxy in front of a backend service",
 		Messages: []*mcp.PromptMessage{

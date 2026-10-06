@@ -64,9 +64,17 @@ Every `list` action accepts:
 - **projects** — `list` | `get` | `set` | `create`. Org resolution: `org` input, else `DATUM_ORG`, else stored active org.
 - **domains** — `list` | `get` | `create` | `update` | `delete`. Namespace `default`. Project resolution: `project`
   input, else active project (from `projects set`).
+- **networkservices** — same shape as `domains`. The backend an `httpproxies` rule routes to
+  (`spec.rules[].backends[].networkService`) — a Workload never auto-creates one, including on redeploy, so
+  create/verify it before creating the HTTPProxy. `spec.networkInterfaces.selector.matchLabels` typically targets
+  `compute.datumapis.com/workload-name: <workload-name>` to pick up that Workload's instances; `spec.ports` are the
+  named ports to expose (must match a container port on the Workload).
 - **httpproxies**, **httproutes**, **gateways**, **trafficprotectionpolicies** — same shape/behavior as `domains`.
   `httproutes` targets Gateway API HTTPRoute, `gateways` targets Gateway API Gateway, `trafficprotectionpolicies`
-  targets either and is group/kind `networking.datumapis.com`/`TrafficProtectionPolicy`.
+  targets either and is group/kind `networking.datumapis.com`/`TrafficProtectionPolicy`. For `httpproxies`, a custom
+  hostname goes in `spec.hostnames` — **not** a hand-created `DNSRecordSet`. The Gateway controller auto-manages the
+  correct DNS record for every `spec.hostnames` entry (visible in a `get` response's `status.hostnameStatuses[].dnsRecords`);
+  a manually-created record for the same name conflicts with it and silently blocks certificate issuance.
 - **dnszones** — full CRUD, namespace `default`, group/kind `dns.networking.miloapis.com`/`DNSZone`.
 - **dnsrecordsets** — full CRUD, namespace `default`, group/kind `dns.networking.miloapis.com`/`DNSRecordSet`.
 - **dnszoneclasses** — `list` | `get`, cluster-scoped, group/kind `dns.networking.miloapis.com`/`DNSZoneClass`.
