@@ -22,7 +22,10 @@ var activityQueryKinds = map[string]string{
 
 const activityToolDescription = "Query audit logs, Kubernetes events, or the combined human-readable activity feed. " +
 	"The primary action is 'create': submit a query and its results come back in the same response's status.results " +
-	"- nothing is persisted the way domains/dnszones/etc. are. Requires an active project (or pass 'project'). " +
+	"- nothing is persisted the way domains/dnszones/etc. are. Actions: list|get|create|delete; there is no 'update' " +
+	"- a query's results are fixed at creation time, so there's nothing meaningful to change after the fact. " +
+	"'delete' cleans up a past query object; it doesn't affect the results you already received. " +
+	"Requires an active project (or pass 'project'). " +
 	"queryType selects the backing query, each with its own spec fields (pass them in body.spec): " +
 	"'audit' (AuditLogQuery) - body.spec: startTime*, endTime* (relative like \"now-7d\" or RFC3339), filter (CEL expression), limit, continue. " +
 	"'events' (EventQuery, up to 60 days vs. the native 24h Events list) - body.spec: startTime*, endTime*, namespace, fieldSelector (standard Kubernetes field-selector syntax, e.g. \"type=Warning\"), limit, continue. " +
@@ -49,6 +52,11 @@ func toolActivity(ctx context.Context, _ *mcp.CallToolRequest, in ActivityInput)
 	if in.Action == "" {
 		in.Action = ActionCreate
 	}
-	r := crudResource{Tool: "activity", Group: "activity.miloapis.com", Kind: kind}
+	r := crudResource{
+		Tool:    "activity",
+		Group:   "activity.miloapis.com",
+		Kind:    kind,
+		Actions: []Action{ActionList, ActionGet, ActionCreate, ActionDelete},
+	}
 	return r.handler(ctx, nil, in.RoutedInput)
 }
