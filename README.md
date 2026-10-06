@@ -180,8 +180,19 @@ Every tool's `list` action accepts:
   - **Project resolution**: `project` input, else active project (from `projects set`).
   - **Namespace**: list/get/create/update run in namespace `default`.
 
+- networkservices
+  - Same shape and behavior as `domains` (namespaced list/get/create/update; delete by name).
+  - The backend an `httpproxies` rule routes to (`spec.rules[].backends[].networkService`) — a Workload never
+    auto-creates one of these, including on redeploy, so create/verify it before creating the HTTPProxy.
+  - `spec.networkInterfaces.selector.matchLabels` typically targets `compute.datumapis.com/workload-name: <workload-name>`
+    to pick up that Workload's instances; `spec.ports` are the named ports to expose (must match a container port on the Workload).
+
 - httpproxies
   - Same shape and behavior as `domains` (namespaced list/get/create/update; delete by name).
+  - To attach a custom hostname, add it to `spec.hostnames` — do **not** create a `DNSRecordSet` for it yourself.
+    The Gateway controller auto-manages the correct DNS record for every entry in `spec.hostnames` (visible in a
+    `get` response's `status.hostnameStatuses[].dnsRecords`); a manually-created record for the same name conflicts
+    with it and silently blocks certificate issuance.
 
 - httproutes
   - Same shape and behavior as `domains` (namespaced list/get/create/update; delete by name).

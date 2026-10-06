@@ -43,6 +43,21 @@ func TestDeployHTTPProxyPrompt(t *testing.T) {
 	if strings.Contains(text, `gateways {"action": "create"`) || strings.Contains(text, `httproutes {"action": "create"`) {
 		t.Errorf("prompt should not instruct creating gateways/httproutes directly; the HTTPProxy provisions them")
 	}
+	// A Workload never auto-creates its backing NetworkService, including on
+	// redeploy - the prompt must tell the agent to check/create one rather
+	// than assume it exists.
+	if !strings.Contains(text, "networkservices") {
+		t.Errorf("expected prompt text to mention networkservices, got:\n%s", text)
+	}
+	// A custom hostname belongs in the HTTPProxy's own spec.hostnames, not a
+	// hand-created DNSRecordSet, which conflicts with the controller's own
+	// auto-managed record for the same name.
+	if !strings.Contains(text, "spec.hostnames") {
+		t.Errorf("expected prompt text to mention spec.hostnames, got:\n%s", text)
+	}
+	if strings.Contains(text, `dnsrecordsets {"action": "create"`) {
+		t.Errorf("prompt should not instruct creating a DNSRecordSet for a custom hostname; spec.hostnames auto-manages it")
+	}
 }
 
 func TestDeployHTTPProxyPromptCustomPathPrefix(t *testing.T) {
