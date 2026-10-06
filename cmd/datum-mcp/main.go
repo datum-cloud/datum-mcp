@@ -15,6 +15,7 @@ func newRootCmd() *cobra.Command {
 	var mode string
 	var host string
 	var port int
+	var allowNonLoopback bool
 
 	cmd := &cobra.Command{
 		Use:   "datum-mcp",
@@ -26,8 +27,7 @@ func newRootCmd() *cobra.Command {
 			case "stdio":
 				return server.Run(ctx)
 			case "http":
-				addr := fmt.Sprintf("%s:%d", host, port)
-				return server.RunHTTP(ctx, addr)
+				return server.RunHTTP(ctx, host, port, allowNonLoopback)
 			default:
 				return fmt.Errorf("unknown mode: %s", mode)
 			}
@@ -37,6 +37,8 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "stdio", "transport mode: stdio | http")
 	cmd.Flags().StringVar(&host, "host", "localhost", "http host")
 	cmd.Flags().IntVar(&port, "port", 8000, "http port")
+	cmd.Flags().BoolVar(&allowNonLoopback, "allow-non-loopback", false,
+		"allow http mode to bind a non-loopback host (DANGEROUS: this transport has no authentication or Origin check of its own)")
 
 	return cmd
 }

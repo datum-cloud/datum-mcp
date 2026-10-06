@@ -98,6 +98,11 @@ datum-mcp --mode http --host localhost --port 9000
 # then point your client's MCP config at http://localhost:9000 (however that
 # client's config format expresses "connect to this URL", not "run this command")
 ```
+  This transport has no authentication or Origin check of its own - every tool call runs with whatever Datum Cloud
+  credentials this process has, so anyone who can reach `host:port` can act as you against Datum Cloud. `--host`
+  refuses to bind anywhere but a loopback address (`localhost`/`127.0.0.1`/`::1`) unless you also pass
+  `--allow-non-loopback`; only do that if you have your own access control in front of it (a reverse proxy, a
+  container network boundary, etc.).
 
 ## Tools
 All tools accept JSON inputs and return both structured content and a pretty-printed text block for UIs that show text only.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -687,15 +688,54 @@ func Run(ctx context.Context) error {
 	return s.Run(ctx, &mcp.StdioTransport{})
 }
 
-// RunHTTP starts the server using the streamable HTTP transport at addr (e.g., "localhost:9000").
+// isLoopbackHost reports whether host is a loopback address or "localhost".
+// An empty host (http.Server's convention for "all interfaces") and the
+// explicit all-interfaces forms ("0.0.0.0", "::") are deliberately not
+// loopback.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// shutdownGracePeriod bounds how long RunHTTP waits for in-flight requests to
+// finish on a graceful shutdown before force-closing remaining connections.
+const shutdownGracePeriod = 10 * time.Second
+
+// RunHTTP starts the server using the streamable HTTP transport on host:port.
 // This is for a client that connects to an already-running server by URL
 // (an HTTP-type MCP client config), not one that spawns datum-mcp itself as
 // a subprocess - that's what stdio mode (the default) is for. Shuts down
 // gracefully when ctx is canceled (e.g. on SIGINT/SIGTERM - see cmd/datum-mcp).
-func RunHTTP(ctx context.Context, addr string) error {
+//
+// This transport has no authentication or Origin check of its own: every
+// tool call runs with whatever Datum Cloud credentials this process has
+// (the operator's own, via EnsureAuth). Anyone who can reach host:port can
+// act as that operator against Datum Cloud. Refuses to bind to a
+// non-loopback host unless allowNonLoopback is set.
+func RunHTTP(ctx context.Context, host string, port int, allowNonLoopback bool) error {
+	if !allowNonLoopback && !isLoopbackHost(host) {
+		return fmt.Errorf(
+			"refusing to bind http mode to non-loopback host %q: this transport has no authentication or Origin check of its own - "+
+				"anyone who can reach it can act as you against Datum Cloud. Use a loopback host (localhost/127.0.0.1), or pass "+
+				"--allow-non-loopback if you understand the risk and have your own access control in front of it",
+			host,
+		)
+	}
+	addr := fmt.Sprintf("%s:%d", host, port)
+
 	s := NewMCPServer()
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return s }, nil)
-	httpServer := &http.Server{Addr: addr, Handler: handler}
+	httpServer := &http.Server{
+		Addr:    addr,
+		Handler: handler,
+		// Bounds how long reading request headers may take, so a client that
+		// trickles headers in slowly (deliberately or not) can't tie up a
+		// connection indefinitely (a "slowloris"-style stall).
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -710,8 +750,20 @@ func RunHTTP(ctx context.Context, addr string) error {
 		}
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return httpServer.Shutdown(shutdownCtx)
+		return gracefulShutdown(httpServer, shutdownGracePeriod)
 	}
+}
+
+// gracefulShutdown shuts srv down within gracePeriod; if that doesn't finish
+// in time (or fails outright), it force-closes remaining connections instead
+// of returning the timeout as an error; a requested shutdown that merely
+// needed longer than the grace period is not a fatal condition, and
+// previously propagated as one up to main's log.Fatal.
+func gracefulShutdown(srv *http.Server, gracePeriod time.Duration) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), gracePeriod)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		_ = srv.Close()
+	}
+	return nil
 }
