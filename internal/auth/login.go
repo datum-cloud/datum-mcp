@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +91,38 @@ const (
 	oidcDiscoveryBaseDelay   = 500 * time.Millisecond
 )
 
+// isRetryableOIDCDiscoveryError reports whether err is the kind of failure
+// discoverProviderWithRetry should retry: a network-level failure (dial,
+// timeout, DNS, TLS - anything satisfying net.Error) or a 5xx response from
+// the provider. A 4xx response (a wrong or misconfigured issuer URL) or a
+// malformed discovery document will fail identically on every attempt, so
+// retrying those only delays reporting the real problem.
+func isRetryableOIDCDiscoveryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return hasRetryable5xxPrefix(err.Error())
+}
+
+// hasRetryable5xxPrefix reports whether msg starts with a 5xx HTTP status
+// line, the shape oidc.NewProvider formats a non-200 discovery response as:
+// fmt.Errorf("%s: %s", resp.Status, body), where resp.Status is Go's
+// standard "<code> <text>" form. oidc.NewProvider doesn't expose the status
+// code in a typed way, so this is the only way to tell a transient 5xx apart
+// from a deterministic 4xx without reimplementing its HTTP call ourselves.
+func hasRetryable5xxPrefix(msg string) bool {
+	fields := strings.SplitN(msg, " ", 2)
+	if len(fields) == 0 {
+		return false
+	}
+	code, err := strconv.Atoi(fields[0])
+	return err == nil && code >= 500 && code <= 599
+}
+
 func discoverProviderWithRetry(ctx context.Context, providerURL string) (*oidc.Provider, error) {
 	var lastErr error
 	delay := oidcDiscoveryBaseDelay
@@ -100,6 +133,9 @@ func discoverProviderWithRetry(ctx context.Context, providerURL string) (*oidc.P
 		provider, err := oidc.NewProvider(ctx, providerURL)
 		if err == nil {
 			return provider, nil
+		}
+		if !isRetryableOIDCDiscoveryError(err) {
+			return nil, err
 		}
 		lastErr = err
 		if attempt == oidcDiscoveryMaxAttempts {
