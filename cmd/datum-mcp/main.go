@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"github.com/datum-cloud/datum-mcp/internal/server"
 	"github.com/spf13/cobra"
@@ -13,18 +15,19 @@ func newRootCmd() *cobra.Command {
 	var mode string
 	var host string
 	var port int
+	var allowNonLoopback bool
 
 	cmd := &cobra.Command{
 		Use:   "datum-mcp",
 		Short: "Datum MCP server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
 			switch mode {
 			case "stdio":
 				return server.Run(ctx)
 			case "http":
-				addr := fmt.Sprintf("%s:%d", host, port)
-				return server.RunHTTP(ctx, addr)
+				return server.RunHTTP(ctx, host, port, allowNonLoopback)
 			default:
 				return fmt.Errorf("unknown mode: %s", mode)
 			}
@@ -34,6 +37,8 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "stdio", "transport mode: stdio | http")
 	cmd.Flags().StringVar(&host, "host", "localhost", "http host")
 	cmd.Flags().IntVar(&port, "port", 8000, "http port")
+	cmd.Flags().BoolVar(&allowNonLoopback, "allow-non-loopback", false,
+		"allow http mode to bind a non-loopback host (DANGEROUS: this transport has no authentication or Origin check of its own)")
 
 	return cmd
 }

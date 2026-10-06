@@ -78,14 +78,39 @@ go build ./cmd/datum-mcp
 - `DATUM_ORG` (active organization for project listing)
 - `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
 
+### Running fully non-interactively (CI, an agent-hosted deployment, etc.)
+Set **both** `DATUM_TOKEN` (a valid bearer token, obtained however you obtain one outside this process) and
+`DATUM_API_HOSTNAME` (e.g. `api.datum.net`). Both are required together: `DATUM_TOKEN` alone used to silently fall
+through to requiring a prior interactive login just to learn the API hostname, even though the token itself was never
+going to come from that login. With both set, no keychain access and no browser is ever needed. `DATUM_USER_ID` is
+also required for the `organizations` tool's `list`/`set` actions (which need a user ID to query memberships), since
+there's no stored-credentials subject to fall back on.
+
 ## Register with your MCP client
 The binary speaks MCP over stdio or streamable http. Register it (e.g., in Claude Desktop) as a command transport pointing to the built executable.
 
 ## Run modes
-- Stdio (http coming soon):
+- **Stdio** (default, and what every mainstream MCP client - Claude Desktop, Claude Code, Cursor - expects): the client
+  spawns `datum-mcp` itself as a subprocess and talks JSON-RPC over its stdin/stdout. This is the `command`-style config
+  shown under Installation above.
 ```bash
 datum-mcp
 ```
+- **HTTP** (for a server you run yourself as a persistent process, e.g. on a shared host): `datum-mcp` listens and
+  serves MCP over streamable HTTP; your client connects to it **by URL**, the same way a browser connects to a web
+  server - the client does not spawn this command. Do not combine `--mode http` with a client config shape that spawns
+  a command (an HTTP-type client config normally takes a `url`, not a `command`); that mismatch is what issue #19 on
+  this repo turned out to be. Exits gracefully on SIGINT/SIGTERM.
+```bash
+datum-mcp --mode http --host localhost --port 9000
+# then point your client's MCP config at http://localhost:9000 (however that
+# client's config format expresses "connect to this URL", not "run this command")
+```
+  This transport has no authentication or Origin check of its own - every tool call runs with whatever Datum Cloud
+  credentials this process has, so anyone who can reach `host:port` can act as you against Datum Cloud. `--host`
+  refuses to bind anywhere but a loopback address (`localhost`/`127.0.0.1`/`::1`) unless you also pass
+  `--allow-non-loopback`; only do that if you have your own access control in front of it (a reverse proxy, a
+  container network boundary, etc.).
 
 ## Tools
 All tools accept JSON inputs and return both structured content and a pretty-printed text block for UIs that show text only.
