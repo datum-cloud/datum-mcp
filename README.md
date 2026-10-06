@@ -6,6 +6,8 @@
   </p>
 </p>
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 An MCP server for Datum Cloud. Gives an agent tools to manage organizations/projects, networking (domains, HTTP
 proxies/routes, gateways, traffic protection policies, DNS), compute workloads, IP address management, Galactic VPC,
 IAM/billing/services, audit/activity search, and a generic escape hatch for any other Datum-managed resource. Auth is
@@ -67,6 +69,8 @@ reuse/refresh the token automatically. For CI or headless use, see "Running full
 3. `projects` → list for the org, then set active project
 4. Use any resource tool for CRUD, or `apis` to inspect CRD schemas
 
+(Or just use the `onboard-to-project` prompt for steps 1-3.)
+
 ## Claude Code skill: when to use Patch instead
 This repo ships a [Claude Code skill](.claude/skills/datum-cloud-assistant/SKILL.md) that teaches an agent when an
 open-ended diagnostic question or a risky/multi-resource change is better handled by **Patch** — Datum Cloud's own
@@ -74,4 +78,5 @@ AI assistant, shipped as a `datumctl` plugin (`datumctl plugin install assistant
 resource tools. Copy `.claude/skills/datum-cloud-assistant/` into your own project's (or `~/.claude/skills/` for a
 global) skills directory to pick it up anywhere you use datum-mcp.
 
-(Or just use the `onboard-to-project` prompt for steps 1-3.)
+## License
+`datum-mcp` is licensed under the Apache License, Version 2.0. See the [LICENSE](./LICENSE) file for details.
