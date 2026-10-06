@@ -337,6 +337,14 @@ var crudResources = []crudResource{
 		Note: "A claim names a class (see ipclasses) and a scope - never a pool, CIDR, or location; the server resolves those and reports the result in status.poolRef/status.allocatedCIDR. 'delete' releases the claim."},
 	{Tool: "ipallocations", Group: "ipam.miloapis.com", Kind: "IPAllocation", Namespace: "default", Actions: []Action{ActionList, ActionGet, ActionDelete}, Toolset: "ipam",
 		Note: "Created by the system when a claim is satisfied, never directly - there is no create/update action. 'delete' releases a held allocation back to its pool, e.g. one left behind by a claim released under reclaim policy Retain."},
+
+	// Compute (toolset "compute"). Workload is the deeply-nested spec a user
+	// writes (placements/template/runtime/sandbox/containers); Instance is a
+	// read-only view of what that produced.
+	{Tool: "workloads", Group: "compute.datumapis.com", Kind: "Workload", Namespace: "default", Toolset: "compute",
+		Note: "The spec is deeply nested (placements, template, runtime, sandbox, containers). Before constructing a body, inspect the shape with the 'apis' tool (group=compute.datumapis.com, version=v1alpha, kind=Workload, detail=structure)."},
+	{Tool: "instances", Group: "compute.datumapis.com", Kind: "Instance", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "compute",
+		Note: "Read-only: instances come from a Workload's rollout, not direct creation. To change them, create/update/delete the owning workload instead."},
 }
 
 // disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
@@ -551,7 +559,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.5.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.6.0"}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
