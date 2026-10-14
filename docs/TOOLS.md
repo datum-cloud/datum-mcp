@@ -123,9 +123,49 @@ Mirrors `datumctl ipam`'s class/pool/claim/allocation grouping.
 - `ipclaims` — full CRUD. Namespaced. Names a class and scope, never a pool/CIDR directly — resolved server-side.
 - `ipallocations` — `list` | `get` | `delete`. Namespaced. Created by the system when a claim is satisfied.
 
+### Networks (toolset `network`) — read-only
+Networks and network services, as networking's own tools see them, mounted from
+[network-services-operator](https://github.com/datum-cloud/network-services-operator) (`pkg/networkagent`): the same
+diagnosis and reason catalog the in-product assistant and `datumctl network` use. Every one reads the **active
+project** and takes no `project` argument.
+- `network_guide` — call with no `skill` first: the network model, how to read status, and the skill list
+  (`network-create`, `network-service-create`, `network-not-ready`, `network-location-triage`,
+  `network-interface-triage`, `network-service-not-serving`, `network-deletion-stuck`).
+- `network_list` / `network_get` / `network_diagnose` — every network worst first, one network in full, and why one (or
+  a workload's use of it) isn't working.
+- `network_service_list` / `network_service_diagnose` — the same for the NetworkServices a load balancer routes to.
+- `network_reason_explain` — what a reason means on a given kind, and who acts.
+- `network_render` — a `Network` or `NetworkService` manifest admission will accept. Writes nothing: create it with
+  `networks`/`networkservices` (`dryRun: true` first).
+
 ### Compute (toolset `compute`)
 - `workloads` — full CRUD. Namespaced. Deeply nested spec — inspect via `apis` with `detail: "structure"` first.
 - `instances` — `list` | `get` only. Namespaced. Comes from a Workload's rollout; change via the owning workload.
+
+Compute's own read-only agent tools, mounted from [compute](https://github.com/datum-cloud/compute)
+(`pkg/computeagent`) and reading the **active project**:
+- `compute_guide` — call with no `skill` first: the compute model, how to read its conditions, and the skill list
+  (`workload-create`, `workload-not-available`, `instance-not-ready`, `placement-triage`, `quota-triage`,
+  `referenced-data-triage`, `stalled-transient`).
+- `compute_workloads_list` / `compute_workloads_get` / `compute_instances_list` — workloads worst first with their root
+  cause, one workload's full condition tree, and its instances.
+- `compute_workload_diagnose` — why a workload isn't available, walked down to the deployment or instance at fault.
+- `compute_reason_explain` — what a condition reason means.
+- `compute_instance_types_list` / `compute_workload_render` — the sizes a workload may ask for, and a Workload manifest
+  built from inputs. Neither writes: create it with `workloads` (`dryRun: true` first).
+
+### DNS (toolset `dns`) — read-only
+DNS's own tools, mounted from [dns-operator](https://github.com/datum-cloud/dns-operator) (`pkg/dnsagent`) and reading
+the **active project**. The `dnszones`/`dnsrecordsets` write tools are core and stay registered when this is disabled.
+- `dns_guide` — call with no `skill` first: the DNS model, how to read conditions and record ownership, and the skill
+  list (`record-create`, `zone-not-resolving`, `record-not-programmed`, `conflicting-record`, `record-not-owner`,
+  `delegation-check`, `domain-verification`, `managed-record-refused`, `zone-import`).
+- `dns_zones_list` / `dns_zones_get` / `dns_zone_diagnose` / `dns_delegation_check` — zones with their derived
+  status, one zone in full, why one isn't resolving, and whether its delegation is in place.
+- `dns_records_list` / `dns_records_get` / `dns_record_diagnose` — the same for record sets, per owner name.
+- `dns_zone_discovery_get` — what a domain resolves to today, for importing a zone managed elsewhere.
+- `dns_record_render` — a DNSRecordSet manifest built from inputs. Writes nothing: create it with `dnsrecordsets`
+  (`dryRun: true` first).
 
 ### Galactic VPC (toolset `vpc`)
 - `networks`, `subnets`, `connectors` — full CRUD, namespaced. Other VPC resources (subnet claims, connector
@@ -135,6 +175,18 @@ Mirrors `datumctl ipam`'s class/pool/claim/allocation grouping.
 - `activity` — `create` (primary) | `get` | `list` | `delete`. Cluster-scoped. `create` submits a query; results come
   back synchronously in `status.results`. Add `queryType`: `audit` | `events` | `feed`, each with its own `body.spec`
   shape (time range, CEL filter, etc. — see source for exact fields per type).
+
+Activity's own read-only query tools, mounted from [activity](https://github.com/datum-cloud/activity)
+(`pkg/mcp/tools`) and reading the **active project**: exactly the set the in-product assistant gets
+(`httpserver.ExposedTools`), so raw audit logs and activity policies stay out.
+- `activity_guide` — call with no `skill` first: how changes are recorded, which tool answers which question, and the
+  skill list (`what-changed`, `who-changed-resource`, `failed-operation-triage`, `event-investigation`).
+- `query_activities`, `get_activity_facets`, `get_activity_timeline`, `summarize_recent_activity`,
+  `compare_activity_periods` — the human-readable activity feed: search it, break it down, and summarise or compare
+  windows.
+- `get_resource_history`, `get_user_activity_summary` — one resource's changes, one person's changes.
+- `find_failed_operations` — requests that failed, as a fixed summarised set of fields.
+- `query_events`, `get_event_facets` — Kubernetes events, up to 60 days back.
 
 ### Search (toolset `search`)
 - `search` — `create` (primary) | `get` | `list` | `update` | `delete`. Same synchronous query pattern as `activity`.
@@ -167,6 +219,10 @@ dnszoneclasses, apis, context) can't be disabled this way.
   `alb-domain-verification`, `alb-backend-not-reachable`, `alb-edge-propagation`, `alb-traffic-protection-triage`,
   `alb-access-log-triage` (optional `load_balancer`) — one per networking skill (toolset `alb`); the same text
   `alb_guide` returns for that skill.
+- `network-*` (optional `name`), `compute-*` (optional `workload`), `dns-*` (optional `zone`) and `activity-*`
+  (optional `resource`) — likewise one per skill of the `network`, `compute`, `dns` and `activity` toolsets, named
+  `<toolset>-<skill>` unless the skill already starts with it (e.g. `network-create`, `compute-workload-create`,
+  `dns-record-create`, `activity-what-changed`).
 
 ## Recommended workflow
 1. `context` → check what's already set up (skip to 5 if `next_step` is `null`)
