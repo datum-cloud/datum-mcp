@@ -313,7 +313,8 @@ var crudResources = []crudResource{
 	{Tool: "domains", Group: "networking.datumapis.com", Kind: "Domain", Namespace: "default"},
 	{Tool: "networkservices", Group: "networking.datumapis.com", Kind: "NetworkService", Namespace: "default",
 		Note: "An HTTPProxy backend (spec.rules[].backends[].networkService) names one of these, not a Workload directly - and a Workload never auto-creates one. " +
-			"spec.networkInterfaces.selector.matchLabels typically targets `compute.datumapis.com/workload-name: <workload-name>` to pick up that Workload's instances; spec.ports are the named ports to expose."},
+			"spec.networkInterfaces.selector.matchLabels typically targets `compute.datumapis.com/workload-name: <workload-name>` to pick up that Workload's instances; spec.ports are the named ports to expose. " +
+			"To find out why one sends traffic nowhere, use network_service_diagnose (network toolset) rather than its raw status."},
 	{Tool: "httpproxies", Group: "networking.datumapis.com", Kind: "HTTPProxy", Namespace: "default",
 		Note: "An HTTPProxy is an Application Load Balancer. To read one, use alb_get/alb_diagnose (alb toolset) rather than its raw status: " +
 			"its top-level conditions aggregate over hostnames and name none, and some read the opposite of how they look. " +
@@ -326,8 +327,10 @@ var crudResources = []crudResource{
 		Note: "Targets Gateway API Gateway resources."},
 	{Tool: "trafficprotectionpolicies", Group: "networking.datumapis.com", Kind: "TrafficProtectionPolicy", Namespace: "default",
 		Note: "Policies target either a Gateway or HTTPRoute via spec.targetRefs."},
-	{Tool: "dnszones", Group: "dns.networking.miloapis.com", Kind: "DNSZone", Namespace: "default"},
-	{Tool: "dnsrecordsets", Group: "dns.networking.miloapis.com", Kind: "DNSRecordSet", Namespace: "default"},
+	{Tool: "dnszones", Group: "dns.networking.miloapis.com", Kind: "DNSZone", Namespace: "default",
+		Note: "To find out why a zone isn't resolving, use dns_zone_diagnose (dns toolset) rather than its raw status. Call dns_guide before creating or changing one."},
+	{Tool: "dnsrecordsets", Group: "dns.networking.miloapis.com", Kind: "DNSRecordSet", Namespace: "default",
+		Note: "One record set can hold several owner names, each with its own status: use dns_record_diagnose (dns toolset) rather than its raw status. Call dns_guide with skill='record-create' before adding or changing records."},
 	{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", Actions: []Action{ActionList, ActionGet},
 		Note: "Cluster-scoped; lists the DNSZoneClasses available when creating a DNSZone."},
 
@@ -353,7 +356,8 @@ var crudResources = []crudResource{
 	// writes (placements/template/runtime/sandbox/containers); Instance is a
 	// read-only view of what that produced.
 	{Tool: "workloads", Group: "compute.datumapis.com", Kind: "Workload", Namespace: "default", Toolset: "compute",
-		Note: "The spec is deeply nested (placements, template, runtime, sandbox, containers). Before constructing a body, inspect the shape with the 'apis' tool (group=compute.datumapis.com, version=v1alpha, kind=Workload, detail=structure)."},
+		Note: "The spec is deeply nested (placements, template, runtime, sandbox, containers). Before constructing a body, call compute_guide with skill='workload-create' and build it with compute_workload_render, or inspect the shape with the 'apis' tool (group=compute.datumapis.com, version=v1alpha, kind=Workload, detail=structure). " +
+			"To find out why one isn't available, use compute_workload_diagnose (compute toolset) rather than its raw status."},
 	{Tool: "instances", Group: "compute.datumapis.com", Kind: "Instance", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "compute",
 		Note: "Read-only: instances come from a Workload's rollout, not direct creation. To change them, create/update/delete the owning workload instead."},
 
@@ -684,11 +688,14 @@ func NewMCPServer() *mcp.Server {
 		}, toolActivity)
 	}
 
-	if !disabled["alb"] {
-		// Only fails if network-services-operator shipped without its
-		// embedded documents; serve everything else rather than nothing.
-		if err := registerALB(s); err != nil {
-			log.Printf("alb toolset disabled: %v", err)
+	for _, t := range agentToolsets {
+		if disabled[t.Name] {
+			continue
+		}
+		// Only fails if a service shipped without its embedded documents;
+		// serve everything else rather than nothing.
+		if err := t.register(s); err != nil {
+			log.Printf("%s toolset disabled: %v", t.Name, err)
 		}
 	}
 

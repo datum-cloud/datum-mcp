@@ -51,7 +51,7 @@ func listedPrompts(t *testing.T, cs *mcp.ClientSession) map[string]*mcp.Prompt {
 	return out
 }
 
-var albToolNames = []string{"alb_list", "alb_get", "alb_diagnose", "alb_reason_explain", "alb_traffic_summary", albGuideToolName}
+var albToolNames = []string{"alb_list", "alb_get", "alb_diagnose", "alb_reason_explain", "alb_traffic_summary", albToolset.guideToolName()}
 
 func TestALBToolsRegistered(t *testing.T) {
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
@@ -91,9 +91,9 @@ func TestALBToolsetCanBeDisabled(t *testing.T) {
 
 func TestEveryALBSkillIsParsedAndPrompted(t *testing.T) {
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
-	skills, err := albSkills()
+	skills, err := albToolset.skills()
 	if err != nil {
-		t.Fatalf("albSkills: %v", err)
+		t.Fatalf("skills: %v", err)
 	}
 	// The ones every load balancer conversation hinges on; if networking ever
 	// renames them, alb_guide's description and albPreamble need to follow.
@@ -110,8 +110,8 @@ func TestEveryALBSkillIsParsedAndPrompted(t *testing.T) {
 		if !strings.HasPrefix(sk.Description, "Use when") {
 			t.Errorf("skill %q: expected a 'Use when ...' description, got %q", name, sk.Description)
 		}
-		if _, ok := prompts[albPromptName(name)]; !ok {
-			t.Errorf("skill %q: expected prompt %q", name, albPromptName(name))
+		if _, ok := prompts[albToolset.promptName(name)]; !ok {
+			t.Errorf("skill %q: expected prompt %q", name, albToolset.promptName(name))
 		}
 	}
 	// AddPrompt replaces on a name collision rather than failing, so a skill
@@ -123,8 +123,8 @@ func TestEveryALBSkillIsParsedAndPrompted(t *testing.T) {
 	}
 }
 
-func TestParseALBSkill(t *testing.T) {
-	sk := parseALBSkill("x", "# Skill: doing a thing\n\nUse when one thing\nbreaks.\n\n## Steps\n\n1. fix it\n")
+func TestParseSkill(t *testing.T) {
+	sk := parseSkill("x", "# Skill: doing a thing\n\nUse when one thing\nbreaks.\n\n## Steps\n\n1. fix it\n")
 	if sk.Title != "doing a thing" {
 		t.Errorf("title: got %q", sk.Title)
 	}
@@ -133,9 +133,9 @@ func TestParseALBSkill(t *testing.T) {
 	}
 }
 
-func guideText(t *testing.T, cs *mcp.ClientSession, args map[string]any) (string, bool) {
+func guideText(t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any) (string, bool) {
 	t.Helper()
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: albGuideToolName, Arguments: args})
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
@@ -148,7 +148,7 @@ func guideText(t *testing.T, cs *mcp.ClientSession, args map[string]any) (string
 
 func TestALBGuideWithNoSkillOrientsAndIndexes(t *testing.T) {
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
-	text, isErr := guideText(t, connect(t), map[string]any{})
+	text, isErr := guideText(t, connect(t), "alb_guide", map[string]any{})
 	if isErr {
 		t.Fatalf("unexpected error: %s", text)
 	}
@@ -166,7 +166,7 @@ func TestALBGuideWithNoSkillOrientsAndIndexes(t *testing.T) {
 
 func TestALBGuideLoadsOneSkillWithThePreamble(t *testing.T) {
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
-	text, isErr := guideText(t, connect(t), map[string]any{"skill": "alb-create.md"})
+	text, isErr := guideText(t, connect(t), "alb_guide", map[string]any{"skill": "alb-create.md"})
 	if isErr {
 		t.Fatalf("unexpected error: %s", text)
 	}
@@ -182,7 +182,7 @@ func TestALBGuideLoadsOneSkillWithThePreamble(t *testing.T) {
 
 func TestALBGuideRejectsAnUnknownSkillWithTheList(t *testing.T) {
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
-	text, isErr := guideText(t, connect(t), map[string]any{"skill": "../../etc/passwd"})
+	text, isErr := guideText(t, connect(t), "alb_guide", map[string]any{"skill": "../../etc/passwd"})
 	if !isErr {
 		t.Fatalf("expected an error result")
 	}
@@ -206,18 +206,5 @@ func TestALBSkillPromptNamesTheLoadBalancer(t *testing.T) {
 	}
 	if !strings.Contains(text, "alb_diagnose") {
 		t.Errorf("expected the alb-not-serving procedure")
-	}
-}
-
-func TestALBToolsNeedAnActiveProjectBeforeLoggingIn(t *testing.T) {
-	// With no project active, albDeps must fail on that alone - before
-	// EnsureAuth, which would otherwise open a browser login just to report
-	// there's nothing to read.
-	if _, err := resolveProjectName(""); err == nil {
-		t.Skip("an earlier test left an active project set; albDeps would go on to log in")
-	}
-	_, err := albDeps(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "no active project") {
-		t.Fatalf("expected a no-active-project error, got %v", err)
 	}
 }

@@ -22,7 +22,9 @@ tools don't:
 - **Broader diagnostic reasoning.** Patch can be asked an open-ended "why" question
   in plain language and figure out which resources to look at, rather than you
   enumerating gateways/httpproxies/activity/events yourself and correlating them
-  by hand.
+  by hand. (For one load balancer, network, workload, DNS zone or "what changed"
+  question, datum-mcp now mounts the same per-service diagnosis Patch uses - see
+  below. Patch's edge is the question that spans them.)
 - **A reviewed-plan apply step.** For changes, Patch proposes the exact manifests
   it intends to apply and shows them before anything happens — applying is a
   separate, explicit step, and the service refuses to apply anything that
@@ -31,10 +33,10 @@ tools don't:
 
 ## When to use Patch instead of (or before) datum-mcp tools
 
-- **Open-ended diagnostic questions**: "why is `api-backend` not available",
-  "what's wrong with this project's networking", "is anything unhealthy here".
-  Don't manually fan out across `workloads`/`instances`/`gateways`/`activity` to
-  reconstruct this yourself when Patch already does that correlation.
+- **Open-ended diagnostic questions that span services**: "what's wrong with
+  this project", "is anything unhealthy here". Don't manually fan out across
+  every toolset to reconstruct this yourself when Patch already does that
+  correlation.
 - **Plan-reviewed changes**: anything risky, multi-resource, or where you want
   a human-reviewable diff of exactly what will be applied before it happens,
   beyond what a single tool's `dryRun` covers.
@@ -45,6 +47,14 @@ tools don't:
   done with datum-mcp's current tools, check whether Patch already covers it.
 
 ## When datum-mcp's own tools are still the right choice
+
+- The question is about one thing a service owns: a load balancer (`alb_diagnose`),
+  a network or network service (`network_diagnose`, `network_service_diagnose`), a
+  workload (`compute_workload_diagnose`), a DNS zone or record (`dns_zone_diagnose`,
+  `dns_record_diagnose`), or what changed (`summarize_recent_activity`,
+  `get_resource_history`, `find_failed_operations`). These are the services' own
+  tools - the same code Patch calls - and each toolset's `<name>_guide` serves the
+  same skills Patch loads. Use them rather than reading raw status yourself.
 
 - You already know the exact resource, action, and body to send — a direct
   tool call is faster and more precise than a conversational round-trip.
