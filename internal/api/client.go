@@ -15,12 +15,14 @@ import (
 )
 
 // resolveGVKs resolves the preferred object and list GVKs for a given Group/Kind
-// using the shared RESTMapper. It returns an error if mapping cannot be resolved.
-func resolveGVKs(group, kind string) (schema.GroupVersionKind, schema.GroupVersionKind, error) {
-	if sharedMapper == nil {
+// using cli's own RESTMapper, so the kind is looked up in the control plane cli
+// talks to: an org control plane doesn't serve compute or DNS, a project one
+// does. It returns an error if mapping cannot be resolved.
+func resolveGVKs(cli ctrlclient.Client, group, kind string) (schema.GroupVersionKind, schema.GroupVersionKind, error) {
+	if cli == nil || cli.RESTMapper() == nil {
 		return schema.GroupVersionKind{}, schema.GroupVersionKind{}, fmt.Errorf("rest mapper not initialized")
 	}
-	m, err := sharedMapper.RESTMapping(schema.GroupKind{Group: group, Kind: kind})
+	m, err := cli.RESTMapper().RESTMapping(schema.GroupKind{Group: group, Kind: kind})
 	if err != nil || m == nil {
 		return schema.GroupVersionKind{}, schema.GroupVersionKind{}, fmt.Errorf("failed to resolve GVK for %s/%s: %w", group, kind, err)
 	}
@@ -29,9 +31,9 @@ func resolveGVKs(group, kind string) (schema.GroupVersionKind, schema.GroupVersi
 	return objGVK, listGVK, nil
 }
 
-// Generic unstructured helpers using the shared RESTMapper
+// Generic unstructured helpers, each resolving kinds through cli's RESTMapper
 func FetchObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string) (*unstructured.Unstructured, error) {
-	objGVK, _, err := resolveGVKs(group, kind)
+	objGVK, _, err := resolveGVKs(cli, group, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +46,7 @@ func FetchObject(ctx context.Context, cli ctrlclient.Client, group, kind, namesp
 }
 
 func FetchList(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string, opts ListOptions) (*unstructured.UnstructuredList, error) {
-	_, listGVK, err := resolveGVKs(group, kind)
+	_, listGVK, err := resolveGVKs(cli, group, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +88,7 @@ func FetchAllItems(ctx context.Context, cli ctrlclient.Client, group, kind, name
 }
 
 func CreateObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace string, in any, opts WriteOptions) (*unstructured.Unstructured, error) {
-	objGVK, _, err := resolveGVKs(group, kind)
+	objGVK, _, err := resolveGVKs(cli, group, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +133,7 @@ func mergeJSON(dst, patch map[string]any) map[string]any {
 }
 
 func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string, in any, opts WriteOptions) (*unstructured.Unstructured, error) {
-	objGVK, _, err := resolveGVKs(group, kind)
+	objGVK, _, err := resolveGVKs(cli, group, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +172,7 @@ func UpdateObjectSpec(ctx context.Context, cli ctrlclient.Client, group, kind, n
 }
 
 func DeleteObject(ctx context.Context, cli ctrlclient.Client, group, kind, namespace, name string, opts WriteOptions) error {
-	objGVK, _, err := resolveGVKs(group, kind)
+	objGVK, _, err := resolveGVKs(cli, group, kind)
 	if err != nil {
 		return err
 	}

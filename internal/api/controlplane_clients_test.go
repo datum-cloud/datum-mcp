@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"k8s.io/client-go/rest"
 	"net/http"
 	"testing"
 
@@ -74,5 +75,45 @@ func TestNewProjectHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
 	}
 	if base.ResponseHeaderTimeout != requestTimeout {
 		t.Errorf("expected ResponseHeaderTimeout %v, got %v", requestTimeout, base.ResponseHeaderTimeout)
+	}
+}
+
+// Each control plane serves its own kinds, so each gets its own mapper: one
+// discovered against an org control plane can't answer for a project's.
+func TestMapperIsPerControlPlane(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	cfg := &rest.Config{Host: "https://api.example.test"}
+	org, err := getOrCreateMapper(cfg, "/apis/resourcemanager.miloapis.com/v1alpha1/organizations/o/control-plane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := getOrCreateMapper(cfg, projectControlPlanePrefix("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org == project {
+		t.Errorf("expected the org and project control planes to get different mappers")
+	}
+	again, err := getOrCreateMapper(cfg, projectControlPlanePrefix("p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != project {
+		t.Errorf("expected one control plane to reuse its mapper")
+	}
+}
+
+func TestSafePathComponentStaysOneDirectory(t *testing.T) {
+	for in, want := range map[string]string{
+		"/apis/resourcemanager.miloapis.com/v1alpha1/projects/p/control-plane": "apis_resourcemanager.miloapis.com_v1alpha1_projects_p_control-plane",
+		"/apis/x/projects/../../../etc/control-plane":                          "apis_x_projects_.._.._.._etc_control-plane",
+		"":   "root",
+		"/":  "root",
+		"..": "root",
+	} {
+		if got := safePathComponent(in); got != want {
+			t.Errorf("safePathComponent(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
