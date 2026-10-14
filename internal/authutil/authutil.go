@@ -110,6 +110,14 @@ func GetAPIHostname() (string, error) {
 	}
 	creds, _, err := GetActiveCredentials()
 	if err != nil {
+		if errors.Is(err, ErrNoActiveUser) && os.Getenv("DATUM_TOKEN") != "" {
+			// DATUM_TOKEN is set, so the caller clearly meant to run
+			// headlessly - "please login first" would send them toward a
+			// browser flow they're trying to avoid, when setting
+			// DATUM_API_HOSTNAME is all that's actually missing.
+			return "", fmt.Errorf("DATUM_TOKEN is set but DATUM_API_HOSTNAME is missing, and there are no stored "+
+				"credentials to derive it from; set both DATUM_TOKEN and DATUM_API_HOSTNAME for headless use: %w", err)
+		}
 		return "", err
 	}
 	if creds.APIHostname != "" {

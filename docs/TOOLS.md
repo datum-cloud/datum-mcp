@@ -30,9 +30,11 @@ installation and quick start.
 
 ### Running fully non-interactively (CI, an agent-hosted deployment, etc.)
 Set **both** `DATUM_TOKEN` and `DATUM_API_HOSTNAME` (e.g. `api.datum.net`). Both are required together — `DATUM_TOKEN`
-alone still falls through to requiring an interactive login just to learn the API hostname. With both set, no
-keychain access and no browser is ever needed. `DATUM_USER_ID` is also required for `organizations` `list`/`set`
-(which need a user ID to query memberships), since there's no stored-credentials subject to fall back on.
+alone still needs the API hostname from somewhere, and without stored credentials from a prior interactive login to
+derive it from, startup fails fast with an error telling you to also set `DATUM_API_HOSTNAME` (no browser is ever
+opened on its account). With both env vars set, no keychain access and no browser is ever needed. `DATUM_USER_ID` is
+also required for `organizations` `list`/`set` (which need a user ID to query memberships), since there's no
+stored-credentials subject to fall back on.
 
 ## Response and error format
 - **List** responses: `{ "items": [...], "count": N, "continue": "..." }` (`continue` is `""` when there's no next page).
