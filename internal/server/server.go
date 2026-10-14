@@ -34,10 +34,10 @@ const (
 // ListParams is embedded in every tool input that supports a 'list' action.
 // All fields are ignored for other actions.
 type ListParams struct {
-	Limit         int64  `json:"limit,omitempty" jsonschema:"Max items to return (list only); clamped to 500, default 100."`
-	Continue      string `json:"continue,omitempty" jsonschema:"Continuation token from a previous list response's 'continue' field, to fetch the next page (list only)."`
+	Limit         int64  `json:"limit,omitempty" jsonschema:"Max items to return (list only); default 100, max 500."`
+	Continue      string `json:"continue,omitempty" jsonschema:"Continuation token from a previous list response, for the next page (list only)."`
 	LabelSelector string `json:"labelSelector,omitempty" jsonschema:"kubectl-style label selector, e.g. 'team=edge,env!=prod' (list only)."`
-	FieldSelector string `json:"fieldSelector,omitempty" jsonschema:"kubectl-style field selector, e.g. 'metadata.name=foo'; only fields the resource registers as selectable are supported (list only)."`
+	FieldSelector string `json:"fieldSelector,omitempty" jsonschema:"kubectl-style field selector, e.g. 'metadata.name=foo' (list only; only resource-registered fields are supported)."`
 }
 
 func (p ListParams) toAPIOptions() api.ListOptions {
@@ -61,18 +61,18 @@ func listEnvelope(list *unstructured.UnstructuredList) map[string]any {
 // RoutedInput is the shared input shape for every CRD-backed CRUD tool.
 type RoutedInput struct {
 	// Optional per-request project override; if empty, uses the active project.
-	Project string `json:"project,omitempty" jsonschema:"Optional project id; overrides the active project set via the 'projects' tool."`
+	Project string `json:"project,omitempty" jsonschema:"Optional project id; overrides the active project."`
 	// Action: one of list|get|create|update|delete (or list|get for read-only resources).
 	Action Action `json:"action" jsonschema:"The operation to perform."`
 	// ID required for get/update/delete
-	ID string `json:"id,omitempty" jsonschema:"Resource name; required for get, update, and delete."`
+	ID string `json:"id,omitempty" jsonschema:"Resource name; required for get/update/delete."`
 	// Body is the request payload for create/update
 	Body map[string]any `json:"body,omitempty" jsonschema:"Resource manifest, e.g. {\"metadata\":{...},\"spec\":{...}}; required for create. For update, body.spec is deep-merged into the existing spec field-by-field: a null field deletes it, nested objects merge recursively, and arrays/scalars replace wholesale — omitted fields are left untouched."`
 	ListParams
 	// DryRun validates create/update/delete server-side without persisting the change.
-	DryRun bool `json:"dryRun,omitempty" jsonschema:"If true (create/update/delete only), validate and run admission without persisting the change; the response shows what would happen."`
+	DryRun bool `json:"dryRun,omitempty" jsonschema:"If true (create/update/delete only), validates without persisting; response shows what would happen."`
 	// ResourceVersion, for update/delete only: enables optimistic concurrency.
-	ResourceVersion string `json:"resourceVersion,omitempty" jsonschema:"For update/delete only: the resourceVersion from a prior 'get'. If the resource has changed since, the call fails instead of overwriting it."`
+	ResourceVersion string `json:"resourceVersion,omitempty" jsonschema:"For update/delete only: resourceVersion from a prior get; a stale value fails instead of overwriting."`
 }
 
 type APIInfoInput struct {
@@ -194,14 +194,13 @@ func (r crudResource) suggestValidAction() *SuggestedAction {
 }
 
 func (r crudResource) description() string {
+	// Per-field detail (body's deep-merge semantics, dryRun, resourceVersion,
+	// pagination, etc.) lives solely in the input schema's own field
+	// descriptions now - restating it here would just be the same bytes
+	// twice in every model-visible copy of this tool.
 	d := fmt.Sprintf(
-		"Manage %s resources (%s/%s). Requires an active project (set via the 'projects' tool, action=set), or pass 'project'. "+
-			"Typical sequence: organizations set -> projects set -> %s list to discover existing resources, then get/create/update/delete. "+
-			"Actions: %s. Fields: project (optional, overrides active project), id (required for get/update/delete), body (required for create/update), "+
-			"limit/continue/labelSelector/fieldSelector (list only, paginated: default 100, max 500 per page), "+
-			"dryRun (create/update/delete: validate without persisting), resourceVersion (update/delete: optimistic concurrency, from a prior get; "+
-			"a stale value fails with a conflict error instead of overwriting). "+
-			"If you get \"no active project set\", call 'projects' with action=list then action=set.",
+		"Manage %s resources (%s/%s). Requires an active project (set via 'projects', action=set) or pass 'project'. "+
+			"Typical sequence: organizations set -> projects set -> %s list, then get/create/update/delete. Actions: %s.",
 		r.Kind, r.Group, r.Kind, r.Tool, r.actions(),
 	)
 	if r.Note != "" {
