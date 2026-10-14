@@ -606,9 +606,15 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 	}
 }
 
+// Version is the server's release version, reported to clients during the
+// MCP initialize handshake. It is overridden at build time via
+// -ldflags "-X .../internal/server.Version=...") so released binaries
+// report their actual tag instead of this placeholder.
+var Version = "dev"
+
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: "0.9.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: Version}, nil)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{

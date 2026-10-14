@@ -4,7 +4,8 @@ DIST := dist
 
 GO ?= go
 CGO_ENABLED ?= 0
-LDFLAGS ?=
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS ?= -X github.com/datum-cloud/datum-mcp/internal/server.Version=$(VERSION)
 
 # Optional extension for Windows targets
 EXTENSION :=

@@ -2,6 +2,7 @@ package authutil
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/datum-cloud/datum-mcp/internal/keyring"
@@ -35,5 +36,20 @@ func TestGetAPIHostnameFallsBackToStoredCredentialsWhenEnvUnset(t *testing.T) {
 	t.Setenv("DATUM_API_HOSTNAME", "")
 	if _, err := GetAPIHostname(); !errors.Is(err, ErrNoActiveUser) {
 		t.Errorf("expected the pre-existing stored-credentials path (and its error) to still apply, got %v", err)
+	}
+}
+
+func TestGetAPIHostnameWithOnlyTokenGivesActionableError(t *testing.T) {
+	// DATUM_TOKEN set, DATUM_API_HOSTNAME unset, no stored credentials: the
+	// caller clearly wants headless use, so the error should point at
+	// DATUM_API_HOSTNAME rather than telling them to log in.
+	t.Setenv("DATUM_API_HOSTNAME", "")
+	t.Setenv("DATUM_TOKEN", "fake-token")
+	_, err := GetAPIHostname()
+	if !errors.Is(err, ErrNoActiveUser) {
+		t.Fatalf("expected error to still wrap ErrNoActiveUser, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "DATUM_API_HOSTNAME") {
+		t.Errorf("expected error to mention DATUM_API_HOSTNAME, got %q", err.Error())
 	}
 }
