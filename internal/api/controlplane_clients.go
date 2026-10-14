@@ -24,9 +24,14 @@ import (
 	"github.com/datum-cloud/datum-mcp/internal/authutil"
 )
 
+// mappers holds one RESTMapper per control plane, keyed by host and path
+// prefix. Each user, org and project control plane serves its own set of kinds,
+// so a mapper discovered against one can't answer for another: sharing one
+// across them made whichever was discovered first decide what every later call
+// could see.
 var (
-	sharedMapper   meta.RESTMapper
-	sharedMapperMu sync.Mutex
+	mappers   = map[string]meta.RESTMapper{}
+	mappersMu sync.Mutex
 )
 
 // requestTimeout bounds how long a single attempt waits for a response to
@@ -48,7 +53,7 @@ func newPrefixedClientWithScheme(ctx context.Context, basePrefix string, scheme 
 	if err != nil {
 		return nil, err
 	}
-	mapper, err := getOrCreateMapper(cfg)
+	mapper, err := getOrCreateMapper(cfg, basePrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -86,23 +91,46 @@ func newPrefixedConfig(ctx context.Context, basePrefix string) (*rest.Config, er
 	}, nil
 }
 
-func getOrCreateMapper(cfg *rest.Config) (meta.RESTMapper, error) {
-	sharedMapperMu.Lock()
-	defer sharedMapperMu.Unlock()
-	if sharedMapper != nil {
-		return sharedMapper, nil
+func getOrCreateMapper(cfg *rest.Config, basePrefix string) (meta.RESTMapper, error) {
+	mappersMu.Lock()
+	defer mappersMu.Unlock()
+	key := cfg.Host + basePrefix
+	if m, ok := mappers[key]; ok {
+		return m, nil
 	}
-	// Build a DeferredDiscoveryRESTMapper backed by on-disk cached discovery, per host
+	// Build a DeferredDiscoveryRESTMapper backed by on-disk cached discovery,
+	// per host and control plane.
 	cacheBaseDir := defaultCacheBaseDir()
 	hostDir := safeHostComponent(cfg.Host)
-	discoveryCacheDir := filepath.Join(cacheBaseDir, hostDir, "discovery")
-	httpCacheDir := filepath.Join(cacheBaseDir, hostDir, "http")
+	planeDir := safePathComponent(basePrefix)
+	discoveryCacheDir := filepath.Join(cacheBaseDir, hostDir, planeDir, "discovery")
+	httpCacheDir := filepath.Join(cacheBaseDir, hostDir, planeDir, "http")
 	dc, err := disk.NewCachedDiscoveryClientForConfig(cfg, discoveryCacheDir, httpCacheDir, 10*time.Minute)
 	if err != nil {
 		return nil, err
 	}
-	sharedMapper = restmapper.NewDeferredDiscoveryRESTMapper(dc)
-	return sharedMapper, nil
+	m := restmapper.NewDeferredDiscoveryRESTMapper(dc)
+	mappers[key] = m
+	return m, nil
+}
+
+// safePathComponent turns a control-plane path prefix into one directory name,
+// e.g. "/apis/resourcemanager.miloapis.com/v1alpha1/projects/p/control-plane" ->
+// "apis_resourcemanager.miloapis.com_v1alpha1_projects_p_control-plane". Every
+// separator becomes "_", so a project name a caller passed can't climb out of
+// the cache directory.
+func safePathComponent(prefix string) string {
+	out := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+			return r
+		}
+		return '_'
+	}, strings.Trim(prefix, "/"))
+	if out == "" || strings.Trim(out, ".") == "" {
+		return "root"
+	}
+	return out
 }
 
 func defaultCacheBaseDir() string {

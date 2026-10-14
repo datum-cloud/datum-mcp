@@ -158,17 +158,7 @@ func TestGetIndexComponentRel(t *testing.T) {
 }
 
 func TestResolveGVKsWithoutMapper(t *testing.T) {
-	sharedMapperMu.Lock()
-	saved := sharedMapper
-	sharedMapper = nil
-	sharedMapperMu.Unlock()
-	t.Cleanup(func() {
-		sharedMapperMu.Lock()
-		sharedMapper = saved
-		sharedMapperMu.Unlock()
-	})
-
-	if _, _, err := resolveGVKs("networking.datumapis.com", "Domain"); err == nil {
+	if _, _, err := resolveGVKs(nil, "networking.datumapis.com", "Domain"); err == nil {
 		t.Errorf("expected error when rest mapper is not initialized")
 	}
 }
