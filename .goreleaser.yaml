@@ -22,6 +22,8 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - -s -w -X github.com/datum-cloud/datum-mcp/internal/server.Version={{ .Version }}
 
 # Raw binaries, not compressed archives: install.sh downloads
 # datum-mcp_<os>_<arch>[.exe] directly, matching Go's own GOOS/GOARCH values
