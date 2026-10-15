@@ -44,16 +44,14 @@ func TestIPAMResourcesRegistered(t *testing.T) {
 
 func TestIPAMToolsetCanBeDisabled(t *testing.T) {
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "ipam")
-	disabled := disabledToolsets()
+	toolsets := selectedToolsets()
 	for _, tool := range []string{"ipclasses", "ippools", "ipclaims", "ipallocations"} {
-		r := findCrudResource(t, tool)
-		if !(r.Toolset != "" && disabled[r.Toolset]) {
+		if toolsets.on(findCrudResource(t, tool).Toolset) {
 			t.Errorf("expected %q to be gated off when ipam is disabled", tool)
 		}
 	}
 	// A core tool must never be gate-able.
-	r := findCrudResource(t, "domains")
-	if r.Toolset != "" && disabled[r.Toolset] {
+	if !toolsets.on(findCrudResource(t, "domains").Toolset) {
 		t.Errorf("expected 'domains' (core) to remain enabled")
 	}
 }

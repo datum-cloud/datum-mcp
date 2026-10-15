@@ -10,7 +10,8 @@ import (
 	"github.com/datum-cloud/datum-mcp/internal/api"
 )
 
-// The network toolset (DATUM_MCP_DISABLE_TOOLSETS=network) mounts networking's
+// The network toolset (DATUM_MCP_DISABLE_TOOLSETS=network, which also gates
+// the networkservices tool) mounts networking's
 // own read-only network and network service tools - network_list, network_get,
 // network_diagnose, network_service_list, network_service_diagnose,
 // network_reason_explain, network_render - straight from

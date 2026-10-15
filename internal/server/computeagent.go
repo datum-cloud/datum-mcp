@@ -11,7 +11,7 @@ import (
 )
 
 // The compute toolset (DATUM_MCP_DISABLE_TOOLSETS=compute, which also gates the
-// workloads/instances tools) mounts compute's own agent tools -
+// workloads tool) mounts compute's own agent tools -
 // compute_workloads_list, compute_workloads_get, compute_instances_list,
 // compute_workload_diagnose, compute_reason_explain,
 // compute_instance_types_list, compute_workload_render - straight from the
@@ -29,8 +29,9 @@ const computePreamble = `These documents are compute's own, written for Datum's 
 
 - The compute_* tools read the ACTIVE PROJECT (see 'projects' action=set) and take no project argument. Use them to read
   workloads - never reason from raw workloads/instances status yourself when compute_workload_diagnose can walk it.
-- resources_list / resources_get = the dedicated tools ('workloads', 'instances', 'networks'), or 'resource' for a kind
-  without one (e.g. group=compute.datumapis.com kind=RuntimeClass). schema_get = 'apis' action=get with
+- resources_list / resources_get = the dedicated tools ('workloads', 'networks'), compute_instances_list for a
+  workload's instances, or 'resource' for a kind without one (e.g. group=compute.datumapis.com kind=Instance
+  namespace=default for one instance by name, or kind=RuntimeClass). schema_get = 'apis' action=get with
   detail=structure.
 - resources_plan = 'workloads' action=create (or update) with the manifest compute_workload_render returned and
   dryRun: true, then tell the user in their own words exactly what it will do. A plan that also creates a Network is

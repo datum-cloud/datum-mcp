@@ -10,9 +10,10 @@ import (
 	"github.com/datum-cloud/datum-mcp/internal/api"
 )
 
-// The alb toolset (DATUM_MCP_DISABLE_TOOLSETS=alb) mounts networking's own
-// read-only Application Load Balancer tools - alb_list, alb_get, alb_diagnose,
-// alb_reason_explain, alb_traffic_summary - straight from
+// The alb toolset (DATUM_MCP_DISABLE_TOOLSETS=alb, which also gates the
+// httpproxies/httproutes/gateways/trafficprotectionpolicies tools) mounts
+// networking's own read-only Application Load Balancer tools - alb_list,
+// alb_get, alb_diagnose, alb_reason_explain, alb_traffic_summary - straight from
 // network-services-operator, plus the knowledge and skills written to go with
 // them. Nothing about how a load balancer is read lives in this repo: the
 // diagnosis walk, the reason catalog and the product decoding are the same

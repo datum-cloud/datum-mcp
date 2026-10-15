@@ -8,9 +8,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/datum-cloud/datum-mcp/internal/api"
@@ -155,8 +157,8 @@ type crudResource struct {
 	// system-managed and only support a subset (e.g. list|get|delete for a
 	// kind a user can inspect and release but never directly create).
 	Actions []Action
-	// Toolset gates registration behind DATUM_MCP_DISABLE_TOOLSETS. "" means
-	// always registered (the original, pre-Phase-2 tool set).
+	// Toolset gates registration behind DATUM_MCP_ENABLE_TOOLSETS /
+	// DATUM_MCP_DISABLE_TOOLSETS. "" means core: always registered.
 	Toolset string
 }
 
@@ -207,6 +209,29 @@ func (r crudResource) description() string {
 		d += " " + r.Note
 	}
 	return d
+}
+
+// inputSchema is RoutedInput's schema without the fields none of this tool's
+// actions read, e.g. body/dryRun/resourceVersion on a list|get-only tool:
+// every tools/list repeats this schema once per tool, so a field that can
+// only be rejected costs context in every session for nothing.
+func (r crudResource) inputSchema() (*jsonschema.Schema, error) {
+	s, err := jsonschema.For[RoutedInput](nil)
+	if err != nil {
+		return nil, err
+	}
+	writes := r.allows(ActionCreate) || r.allows(ActionUpdate)
+	unused := map[string]bool{
+		"body":            !writes,
+		"dryRun":          !writes && !r.allows(ActionDelete),
+		"resourceVersion": !r.allows(ActionUpdate) && !r.allows(ActionDelete),
+	}
+	for field, drop := range unused {
+		if drop {
+			delete(s.Properties, field)
+		}
+	}
+	return s, nil
 }
 
 func (r crudResource) annotations() *mcp.ToolAnnotations {
@@ -309,34 +334,36 @@ func withDryRunNote(result map[string]any, dryRun bool) map[string]any {
 // enhancement plan for the generic/dynamic escape hatch this list is a
 // stopgap for.
 var crudResources = []crudResource{
+	// Domain is core: a verified Domain is what both an ALB hostname and a
+	// managed DNS zone build on, so it can't belong to either toolset.
 	{Tool: "domains", Group: "networking.datumapis.com", Kind: "Domain", Namespace: "default"},
-	{Tool: "networkservices", Group: "networking.datumapis.com", Kind: "NetworkService", Namespace: "default",
+
+	// Every other tool shares a Toolset with its service's agent tools (see
+	// agentToolsets), so one name sheds a service's whole surface, write
+	// tools included, and nothing is left pointing at a guide or diagnose tool
+	// that isn't registered.
+	{Tool: "networkservices", Group: "networking.datumapis.com", Kind: "NetworkService", Namespace: "default", Toolset: "network",
 		Note: "An HTTPProxy backend (spec.rules[].backends[].networkService) names one of these, not a Workload directly - and a Workload never auto-creates one. " +
 			"spec.networkInterfaces.selector.matchLabels typically targets `compute.datumapis.com/workload-name: <workload-name>` to pick up that Workload's instances; spec.ports are the named ports to expose. " +
 			"To find out why one sends traffic nowhere, use network_service_diagnose (network toolset) rather than its raw status."},
-	{Tool: "httpproxies", Group: "networking.datumapis.com", Kind: "HTTPProxy", Namespace: "default",
+	{Tool: "httpproxies", Group: "networking.datumapis.com", Kind: "HTTPProxy", Namespace: "default", Toolset: "alb",
 		Note: "An HTTPProxy is an Application Load Balancer. To read one, use alb_get/alb_diagnose (alb toolset) rather than its raw status: " +
 			"its top-level conditions aggregate over hostnames and name none, and some read the opposite of how they look. " +
 			"Call alb_guide before creating or changing one. " +
 			"To attach a custom hostname, add it to spec.hostnames (see 'get' response's status.hostnameStatuses[].dnsRecords) rather than creating a DNSRecordSet by hand - " +
 			"the Gateway controller auto-manages the correct DNS record for each entry in spec.hostnames, and a manually-created record for the same name will conflict with it and block certificate issuance."},
-	{Tool: "httproutes", Group: "gateway.networking.k8s.io", Kind: "HTTPRoute", Namespace: "default",
+	{Tool: "httproutes", Group: "gateway.networking.k8s.io", Kind: "HTTPRoute", Namespace: "default", Toolset: "alb",
 		Note: "Targets Gateway API HTTPRoute resources."},
-	{Tool: "gateways", Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: "default",
+	{Tool: "gateways", Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: "default", Toolset: "alb",
 		Note: "Targets Gateway API Gateway resources."},
-	{Tool: "trafficprotectionpolicies", Group: "networking.datumapis.com", Kind: "TrafficProtectionPolicy", Namespace: "default",
+	{Tool: "trafficprotectionpolicies", Group: "networking.datumapis.com", Kind: "TrafficProtectionPolicy", Namespace: "default", Toolset: "alb",
 		Note: "Policies target either a Gateway or HTTPRoute via spec.targetRefs."},
-	{Tool: "dnszones", Group: "dns.networking.miloapis.com", Kind: "DNSZone", Namespace: "default",
+	{Tool: "dnszones", Group: "dns.networking.miloapis.com", Kind: "DNSZone", Namespace: "default", Toolset: "dns",
 		Note: "To find out why a zone isn't resolving, use dns_zone_diagnose (dns toolset) rather than its raw status. Call dns_guide before creating or changing one."},
-	{Tool: "dnsrecordsets", Group: "dns.networking.miloapis.com", Kind: "DNSRecordSet", Namespace: "default",
+	{Tool: "dnsrecordsets", Group: "dns.networking.miloapis.com", Kind: "DNSRecordSet", Namespace: "default", Toolset: "dns",
 		Note: "One record set can hold several owner names, each with its own status: use dns_record_diagnose (dns toolset) rather than its raw status. Call dns_guide with skill='record-create' before adding or changing records."},
-	{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", Actions: []Action{ActionList, ActionGet},
+	{Tool: "dnszoneclasses", Group: "dns.networking.miloapis.com", Kind: "DNSZoneClass", Actions: []Action{ActionList, ActionGet}, Toolset: "dns",
 		Note: "Cluster-scoped; lists the DNSZoneClasses available when creating a DNSZone."},
-
-	// Phase 2 additions are tagged with a Toolset so they can be disabled via
-	// DATUM_MCP_DISABLE_TOOLSETS (comma-separated, e.g. "billing,iam") without
-	// affecting the original (untagged / Toolset "") tools above, which are
-	// always registered.
 
 	// IPAM (toolset "ipam"). Mirrors datumctl's own class/pool/claim/allocation
 	// grouping: classes are operator-authored and read-only; pools and claims
@@ -352,13 +379,12 @@ var crudResources = []crudResource{
 		Note: "Created by the system when a claim is satisfied, never directly - there is no create/update action. 'delete' releases a held allocation back to its pool, e.g. one left behind by a claim released under reclaim policy Retain."},
 
 	// Compute (toolset "compute"). Workload is the deeply-nested spec a user
-	// writes (placements/template/runtime/sandbox/containers); Instance is a
-	// read-only view of what that produced.
+	// writes (placements/template/runtime/sandbox/containers). Instances are
+	// read through compute_instances_list (or 'resource' for one by name), so
+	// they don't get a dedicated tool of their own.
 	{Tool: "workloads", Group: "compute.datumapis.com", Kind: "Workload", Namespace: "default", Toolset: "compute",
 		Note: "The spec is deeply nested (placements, template, runtime, sandbox, containers). Before constructing a body, call compute_guide with skill='workload-create' and build it with compute_workload_render, or inspect the shape with the 'apis' tool (group=compute.datumapis.com, version=v1alpha, kind=Workload, detail=structure). " +
 			"To find out why one isn't available, use compute_workload_diagnose (compute toolset) rather than its raw status."},
-	{Tool: "instances", Group: "compute.datumapis.com", Kind: "Instance", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "compute",
-		Note: "Read-only: instances come from a Workload's rollout, not direct creation. To change them, create/update/delete the owning workload instead."},
 
 	// Galactic VPC (toolset "vpc"). The long tail (subnetclaims, connector
 	// advertisements/classes, network policies/interfaces/contexts/bindings,
@@ -399,18 +425,86 @@ var crudResources = []crudResource{
 	{Tool: "invoices", Group: "billing.miloapis.com", Kind: "Invoice", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "billing"},
 }
 
-// disabledToolsets parses DATUM_MCP_DISABLE_TOOLSETS into a lookup set.
-// "core" can never be disabled this way - leave the set of always-on tools
-// out of it entirely rather than special-casing it everywhere else.
-func disabledToolsets() map[string]bool {
+// toolsetSelection is which optional toolsets get registered:
+// DATUM_MCP_ENABLE_TOOLSETS (an allowlist; unset means every toolset), then
+// DATUM_MCP_DISABLE_TOOLSETS taken away from that. Core (Toolset "") is
+// always registered and isn't named in either list.
+type toolsetSelection struct {
+	enable  map[string]bool // nil: every toolset
+	disable map[string]bool
+}
+
+func selectedToolsets() toolsetSelection {
+	return toolsetSelection{
+		enable:  parseToolsets(os.Getenv("DATUM_MCP_ENABLE_TOOLSETS")),
+		disable: parseToolsets(os.Getenv("DATUM_MCP_DISABLE_TOOLSETS")),
+	}
+}
+
+// parseToolsets reads a comma-separated toolset list, case-insensitively.
+// It returns nil only for an empty value, so DATUM_MCP_ENABLE_TOOLSETS=core
+// still means "core only" rather than "everything". "core" itself is dropped:
+// it's never optional.
+func parseToolsets(v string) map[string]bool {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
 	set := map[string]bool{}
-	for _, t := range strings.Split(os.Getenv("DATUM_MCP_DISABLE_TOOLSETS"), ",") {
+	for _, t := range strings.Split(v, ",") {
 		t = strings.ToLower(strings.TrimSpace(t))
 		if t != "" && t != "core" {
 			set[t] = true
 		}
 	}
 	return set
+}
+
+func (s toolsetSelection) on(toolset string) bool {
+	if toolset == "" {
+		return true
+	}
+	if s.enable != nil && !s.enable[toolset] {
+		return false
+	}
+	return !s.disable[toolset]
+}
+
+// unknown returns the names in either list that aren't a toolset, so a typo
+// doesn't silently leave everything (or nothing) registered.
+func (s toolsetSelection) unknown() []string {
+	known := map[string]bool{}
+	for _, t := range knownToolsets() {
+		known[t] = true
+	}
+	var out []string
+	for _, set := range []map[string]bool{s.enable, s.disable} {
+		for t := range set {
+			if !known[t] {
+				out = append(out, t)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// knownToolsets is every optional toolset name, sorted.
+func knownToolsets() []string {
+	set := map[string]bool{"resource": true, "activity": true}
+	for _, r := range crudResources {
+		if r.Toolset != "" {
+			set[r.Toolset] = true
+		}
+	}
+	for _, t := range agentToolsets {
+		set[t.Name] = true
+	}
+	out := make([]string, 0, len(set))
+	for t := range set {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Organization memberships tool: list|get|set
@@ -657,19 +751,29 @@ func NewMCPServer() *mcp.Server {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, toolAPIs)
 
-	disabled := disabledToolsets()
+	toolsets := selectedToolsets()
+	if unknown := toolsets.unknown(); len(unknown) > 0 {
+		log.Printf("ignoring unknown toolsets %s; known toolsets: %s", strings.Join(unknown, ", "), strings.Join(knownToolsets(), ", "))
+	}
 	for _, r := range crudResources {
-		if r.Toolset != "" && disabled[r.Toolset] {
+		if !toolsets.on(r.Toolset) {
 			continue
+		}
+		schema, err := r.inputSchema()
+		if err != nil {
+			// RoutedInput is a fixed struct: this only fails if it stops
+			// being one jsonschema can describe, which every test would catch.
+			panic(fmt.Sprintf("%s input schema: %v", r.Tool, err))
 		}
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        r.Tool,
 			Description: r.description(),
+			InputSchema: schema,
 			Annotations: r.annotations(),
 		}, r.handler)
 	}
 
-	if !disabled["resource"] {
+	if toolsets.on("resource") {
 		resourceDestructive := true
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "resource",
@@ -678,7 +782,7 @@ func NewMCPServer() *mcp.Server {
 		}, toolResource)
 	}
 
-	if !disabled["activity"] {
+	if toolsets.on("activity") {
 		activityDestructive := true
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "activity",
@@ -688,7 +792,7 @@ func NewMCPServer() *mcp.Server {
 	}
 
 	for _, t := range agentToolsets {
-		if disabled[t.Name] {
+		if !toolsets.on(t.Name) {
 			continue
 		}
 		// Only fails if a service shipped without its embedded documents;
@@ -705,7 +809,7 @@ func NewMCPServer() *mcp.Server {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &contextDestructive, IdempotentHint: true},
 	}, toolContext)
 
-	registerPrompts(s)
+	registerPrompts(s, toolsets)
 
 	return s
 }
