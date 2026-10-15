@@ -10,7 +10,8 @@ import (
 	"github.com/datum-cloud/datum-mcp/internal/api"
 )
 
-// The dns toolset (DATUM_MCP_DISABLE_TOOLSETS=dns) mounts DNS's own agent
+// The dns toolset (DATUM_MCP_DISABLE_TOOLSETS=dns, which also gates the
+// dnszones/dnsrecordsets/dnszoneclasses tools) mounts DNS's own agent
 // tools - dns_zones_list, dns_zones_get, dns_zone_diagnose,
 // dns_delegation_check, dns_records_list, dns_records_get,
 // dns_record_diagnose, dns_record_render, dns_zone_discovery_get - straight

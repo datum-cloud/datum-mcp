@@ -27,24 +27,30 @@ import (
 // DNSRecordSet: the Gateway controller auto-manages the DNS record for each
 // spec.hostnames entry, and a manually-created record for the same name
 // conflicts with it and silently blocks certificate issuance.
-func registerPrompts(s *mcp.Server) {
-	s.AddPrompt(&mcp.Prompt{
-		Name:        "deploy-http-proxy",
-		Description: "Expose a backend NetworkService on the public internet via an HTTPProxy.",
-		Arguments: []*mcp.PromptArgument{
-			{Name: "backend_service", Description: "Name of the NetworkService to route traffic to", Required: true},
-			{Name: "backend_port", Description: "Port name declared on the backend NetworkService, e.g. 'http' (a name, not a number)", Required: true},
-			{Name: "path_prefix", Description: "URL path prefix to match (default '/')", Required: false},
-		},
-	}, deployHTTPProxyPrompt)
+//
+// A prompt is only offered when every toolset its steps call is registered.
+func registerPrompts(s *mcp.Server, toolsets toolsetSelection) {
+	if toolsets.on("alb") && toolsets.on("network") {
+		s.AddPrompt(&mcp.Prompt{
+			Name:        "deploy-http-proxy",
+			Description: "Expose a backend NetworkService on the public internet via an HTTPProxy.",
+			Arguments: []*mcp.PromptArgument{
+				{Name: "backend_service", Description: "Name of the NetworkService to route traffic to", Required: true},
+				{Name: "backend_port", Description: "Port name declared on the backend NetworkService, e.g. 'http' (a name, not a number)", Required: true},
+				{Name: "path_prefix", Description: "URL path prefix to match (default '/')", Required: false},
+			},
+		}, deployHTTPProxyPrompt)
+	}
 
-	s.AddPrompt(&mcp.Prompt{
-		Name:        "configure-dns",
-		Description: "Create a managed DNS zone for a domain and point its nameservers at Datum.",
-		Arguments: []*mcp.PromptArgument{
-			{Name: "domain_name", Description: "Fully qualified domain name to manage, e.g. example.com", Required: true},
-		},
-	}, configureDNSPrompt)
+	if toolsets.on("dns") {
+		s.AddPrompt(&mcp.Prompt{
+			Name:        "configure-dns",
+			Description: "Create a managed DNS zone for a domain and point its nameservers at Datum.",
+			Arguments: []*mcp.PromptArgument{
+				{Name: "domain_name", Description: "Fully qualified domain name to manage, e.g. example.com", Required: true},
+			},
+		}, configureDNSPrompt)
+	}
 
 	s.AddPrompt(&mcp.Prompt{
 		Name:        "onboard-to-project",

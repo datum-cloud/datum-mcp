@@ -26,6 +26,7 @@ installation and quick start.
 - `DATUM_VERBOSE` (`true` to print verbose auth logs)
 - `DATUM_USER_ID` (override user subject; otherwise from stored credentials)
 - `DATUM_ORG` (active organization for project listing)
+- `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated allowlist, e.g. `dns`; unset means every toolset; see "Toolsets" below)
 - `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
 
 ### Running fully non-interactively (CI, an agent-hosted deployment, etc.)
@@ -66,20 +67,20 @@ Every `list` action accepts:
 - **projects** — `list` | `get` | `set` | `create`. Org resolution: `org` input, else `DATUM_ORG`, else stored active org.
 - **domains** — `list` | `get` | `create` | `update` | `delete`. Namespace `default`. Project resolution: `project`
   input, else active project (from `projects set`).
-- **networkservices** — same shape as `domains`. The backend an `httpproxies` rule routes to
+- **networkservices** (toolset `network`) — same shape as `domains`. The backend an `httpproxies` rule routes to
   (`spec.rules[].backends[].networkService`) — a Workload never auto-creates one, including on redeploy, so
   create/verify it before creating the HTTPProxy. `spec.networkInterfaces.selector.matchLabels` typically targets
   `compute.datumapis.com/workload-name: <workload-name>` to pick up that Workload's instances; `spec.ports` are the
   named ports to expose (must match a container port on the Workload).
-- **httpproxies**, **httproutes**, **gateways**, **trafficprotectionpolicies** — same shape/behavior as `domains`.
+- **httpproxies**, **httproutes**, **gateways**, **trafficprotectionpolicies** (toolset `alb`) — same shape/behavior as `domains`.
   `httproutes` targets Gateway API HTTPRoute, `gateways` targets Gateway API Gateway, `trafficprotectionpolicies`
   targets either and is group/kind `networking.datumapis.com`/`TrafficProtectionPolicy`. For `httpproxies`, a custom
   hostname goes in `spec.hostnames` — **not** a hand-created `DNSRecordSet`. The Gateway controller auto-manages the
   correct DNS record for every `spec.hostnames` entry (visible in a `get` response's `status.hostnameStatuses[].dnsRecords`);
   a manually-created record for the same name conflicts with it and silently blocks certificate issuance.
-- **dnszones** — full CRUD, namespace `default`, group/kind `dns.networking.miloapis.com`/`DNSZone`.
-- **dnsrecordsets** — full CRUD, namespace `default`, group/kind `dns.networking.miloapis.com`/`DNSRecordSet`.
-- **dnszoneclasses** — `list` | `get`, cluster-scoped, group/kind `dns.networking.miloapis.com`/`DNSZoneClass`.
+- **dnszones** (toolset `dns`) — full CRUD, namespace `default`, group/kind `dns.networking.miloapis.com`/`DNSZone`.
+- **dnsrecordsets** (toolset `dns`) — full CRUD, namespace `default`, group/kind `dns.networking.miloapis.com`/`DNSRecordSet`.
+- **dnszoneclasses** (toolset `dns`) — `list` | `get`, cluster-scoped, group/kind `dns.networking.miloapis.com`/`DNSZoneClass`.
 - **apis** — `list` | `get`. CRD discovery via upstream OpenAPI/`kubectl explain` logic. `list` returns
   groups/versions/resources; `get` returns the schema for a kind (`detail: "structure"` for a condensed shape).
 - **context** — no actions, call with `{}`. Stateless snapshot: `authenticated`, `active_organization`,
@@ -140,7 +141,9 @@ project** and takes no `project` argument.
 
 ### Compute (toolset `compute`)
 - `workloads` — full CRUD. Namespaced. Deeply nested spec — inspect via `apis` with `detail: "structure"` first.
-- `instances` — `list` | `get` only. Namespaced. Comes from a Workload's rollout; change via the owning workload.
+  Instances come from a Workload's rollout: read them with `compute_instances_list` (or `resource` with
+  `group: compute.datumapis.com`, `kind: Instance`, `namespace: default` for one by name), and change them through the
+  owning workload.
 
 Compute's own read-only agent tools, mounted from [compute](https://github.com/datum-cloud/compute)
 (`pkg/computeagent`) and reading the **active project**:
@@ -156,7 +159,7 @@ Compute's own read-only agent tools, mounted from [compute](https://github.com/d
 
 ### DNS (toolset `dns`) — read-only
 DNS's own tools, mounted from [dns-operator](https://github.com/datum-cloud/dns-operator) (`pkg/dnsagent`) and reading
-the **active project**. The `dnszones`/`dnsrecordsets` write tools are core and stay registered when this is disabled.
+the **active project**. Disabling `dns` also removes the `dnszones`/`dnsrecordsets`/`dnszoneclasses` tools.
 - `dns_guide` — call with no `skill` first: the DNS model, how to read conditions and record ownership, and the skill
   list (`record-create`, `zone-not-resolving`, `record-not-programmed`, `conflicting-record`, `record-not-owner`,
   `delegation-check`, `domain-verification`, `managed-record-refused`, `zone-import`).
@@ -205,10 +208,19 @@ Activity's own read-only query tools, mounted from [activity](https://github.com
 - `billingaccounts`, `invoices` — `list` | `get`. Namespaced.
 
 ## Toolsets
-Some tools are grouped into optional toolsets, disabled via `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated,
-case-insensitive), e.g. `DATUM_MCP_DISABLE_TOOLSETS=billing,iam,resource`. The core set (organizations, projects,
-users, domains, httpproxies, httproutes, gateways, trafficprotectionpolicies, dnszones, dnsrecordsets,
-dnszoneclasses, apis, context) can't be disabled this way.
+Every tool outside the core set (organizations, projects, users, domains, apis, context) belongs to an optional
+toolset: `activity`, `alb`, `billing`, `compute`, `dns`, `iam`, `ipam`, `network`, `resource`, `search`, `services`,
+`vpc`. A service's write tools share its toolset with its agent tools, so one name covers the whole service (e.g.
+`dns` is `dnszones`/`dnsrecordsets`/`dnszoneclasses` plus every `dns_*` tool and `dns-*` prompt).
+
+Both variables are comma-separated and case-insensitive:
+- `DATUM_MCP_ENABLE_TOOLSETS` registers only the toolsets it names, plus core. Use it to keep the tool list small
+  when this server runs alongside others: `DATUM_MCP_ENABLE_TOOLSETS=dns` is 19 tools instead of 74, and
+  `DATUM_MCP_ENABLE_TOOLSETS=core` is the 6 core tools alone. Unset means every toolset.
+- `DATUM_MCP_DISABLE_TOOLSETS` then removes toolsets from that, e.g. `DATUM_MCP_DISABLE_TOOLSETS=billing,iam,resource`.
+
+Core can't be disabled. An unknown toolset name is ignored with a warning on stderr. The `deploy-http-proxy` prompt is
+offered only when `alb` and `network` are both enabled, and `configure-dns` only when `dns` is.
 
 ## Prompts
 - `deploy-http-proxy` (`backend_service`, `backend_port` — a port name, optional `path_prefix`) — expose a backend via an

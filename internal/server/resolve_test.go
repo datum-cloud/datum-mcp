@@ -175,22 +175,23 @@ func TestCrudResourceMixedActionSet(t *testing.T) {
 	}
 }
 
-func TestDisabledToolsets(t *testing.T) {
-	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
-	if got := disabledToolsets(); len(got) != 0 {
-		t.Errorf("expected empty set when unset, got %v", got)
+func TestParseToolsets(t *testing.T) {
+	if got := parseToolsets(""); got != nil {
+		t.Errorf("expected nil when unset, got %v", got)
+	}
+	if got := parseToolsets("core"); got == nil || len(got) != 0 {
+		t.Errorf("expected an empty, non-nil set for 'core' alone, got %v", got)
 	}
 
-	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", " Billing , iam ,core")
-	got := disabledToolsets()
+	got := parseToolsets(" Billing , iam ,core")
 	if !got["billing"] || !got["iam"] {
-		t.Errorf("expected billing and iam disabled (case-insensitive, trimmed), got %v", got)
+		t.Errorf("expected billing and iam (case-insensitive, trimmed), got %v", got)
 	}
 	if got["core"] {
-		t.Errorf("expected 'core' to never be disablable, got %v", got)
+		t.Errorf("expected 'core' to never be listed (it isn't optional), got %v", got)
 	}
 	if len(got) != 2 {
-		t.Errorf("expected exactly 2 disabled toolsets, got %v", got)
+		t.Errorf("expected exactly 2 toolsets, got %v", got)
 	}
 }
 

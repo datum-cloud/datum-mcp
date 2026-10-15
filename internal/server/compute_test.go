@@ -9,7 +9,6 @@ func TestComputeResourcesRegistered(t *testing.T) {
 		actions string
 	}{
 		{"workloads", "Workload", "list|get|create|update|delete"},
-		{"instances", "Instance", "list|get"},
 	}
 	for _, c := range cases {
 		t.Run(c.tool, func(t *testing.T) {

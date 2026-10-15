@@ -83,9 +83,12 @@ func TestALBToolsetCanBeDisabled(t *testing.T) {
 			t.Errorf("expected prompt %q to be gated off when alb is disabled", name)
 		}
 	}
-	// The existing httpproxies tool is core and stays.
-	if _, ok := tools["httpproxies"]; !ok {
-		t.Errorf("expected 'httpproxies' (core) to remain registered")
+	// httpproxies belongs to the toolset too; domains is core and stays.
+	if _, ok := tools["httpproxies"]; ok {
+		t.Errorf("expected 'httpproxies' to be gated off when alb is disabled")
+	}
+	if _, ok := tools["domains"]; !ok {
+		t.Errorf("expected 'domains' (core) to remain registered")
 	}
 }
 
