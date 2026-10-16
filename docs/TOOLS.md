@@ -236,6 +236,12 @@ Both variables are comma-separated and case-insensitive:
 Core can't be disabled. An unknown toolset name is ignored with a warning on stderr. The `deploy-http-proxy` prompt is
 offered only when `alb` and `network` are both enabled, and `configure-dns` only when `dns` is.
 
+The server's `instructions` (sent at `initialize`) list every toolset, split into those on and those turned off in
+this session, so an agent can tell the user what to enable instead of not knowing a toolset exists. The `alb`,
+`network`, `compute`, `dns` and `activity` guides were written for Datum's in-product assistant, where "hand off to
+Compute" means another agent; each guide's preamble maps those hand-offs onto the other toolsets' guides here, or
+says the toolset is turned off.
+
 ## Prompts
 - `deploy-http-proxy` (`backend_service`, `backend_port` — a port name, optional `path_prefix`) — expose a backend via an
   `HTTPProxy`, auto-provisioning its `Gateway`/`HTTPRoute`.

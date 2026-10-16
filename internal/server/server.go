@@ -693,7 +693,9 @@ var Version = "dev"
 
 // NewMCPServer constructs the MCP server with all registered tools.
 func NewMCPServer() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: Version}, nil)
+	toolsets := selectedToolsets()
+	s := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp", Version: Version},
+		&mcp.ServerOptions{Instructions: serverInstructions(toolsets)})
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
@@ -734,7 +736,6 @@ func NewMCPServer() *mcp.Server {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, toolAPIs)
 
-	toolsets := selectedToolsets()
 	if unknown := toolsets.unknown(); len(unknown) > 0 {
 		log.Printf("ignoring unknown toolsets %s; known toolsets: %s", strings.Join(unknown, ", "), strings.Join(knownToolsets(), ", "))
 	}
@@ -780,7 +781,7 @@ func NewMCPServer() *mcp.Server {
 		}
 		// Only fails if a service shipped without its embedded documents;
 		// serve everything else rather than nothing.
-		if err := t.register(s); err != nil {
+		if err := t.register(s, toolsets); err != nil {
 			log.Printf("%s toolset disabled: %v", t.Name, err)
 		}
 	}

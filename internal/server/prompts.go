@@ -127,7 +127,11 @@ func onboardToProjectPrompt(_ context.Context, _ *mcp.GetPromptRequest) (*mcp.Ge
    organizations {"action": "set", "name": "<org-id>"}. Then call context {} again.
 3. If next_step (now) mentions 'projects': call projects {"action": "list"}, pick one, then
    projects {"action": "set", "body": {"name": "<project-id>"}}. Then call context {} again.
-4. Once context {} returns next_step: null, you're ready to use any resource tool.`
+4. If next_step says organizations or projects couldn't be listed (a service account, or an identity
+   without that permission), don't keep listing: ask the user for the project id, then pass it as
+   'project' or call projects {"action": "set", "body": {"name": "<project-id>"}}.
+5. Once context {} returns next_step: null, you're ready to use any resource tool. A service account
+   gets there at step 1: its own project is used by default.`
 	return &mcp.GetPromptResult{
 		Description: "Step-by-step: onboard a fresh session to an active org/project",
 		Messages: []*mcp.PromptMessage{
