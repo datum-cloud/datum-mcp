@@ -28,9 +28,10 @@ import (
 // spec.hostnames entry, and a manually-created record for the same name
 // conflicts with it and silently blocks certificate issuance.
 //
-// A prompt is only offered when every toolset its steps call is registered.
-func registerPrompts(s *mcp.Server, toolsets toolsetSelection) {
-	if toolsets.on("alb") && toolsets.on("network") {
+// A prompt is only offered when every toolset its steps call is loaded. It's
+// called again after each mid-session load; re-adding a prompt replaces it.
+func registerPrompts(s *mcp.Server, loaded func(string) bool) {
+	if loaded("alb") && loaded("network") {
 		s.AddPrompt(&mcp.Prompt{
 			Name:        "deploy-http-proxy",
 			Description: "Expose a backend NetworkService on the public internet via an HTTPProxy.",
@@ -42,7 +43,7 @@ func registerPrompts(s *mcp.Server, toolsets toolsetSelection) {
 		}, deployHTTPProxyPrompt)
 	}
 
-	if toolsets.on("dns") {
+	if loaded("dns") {
 		s.AddPrompt(&mcp.Prompt{
 			Name:        "configure-dns",
 			Description: "Create a managed DNS zone for a domain and point its nameservers at Datum.",
