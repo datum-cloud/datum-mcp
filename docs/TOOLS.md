@@ -27,8 +27,8 @@ installation and quick start.
 - `DATUM_USER_ID` (override user subject; otherwise the `DATUM_TOKEN` user as the API reports it, else stored credentials)
 - `DATUM_ORG` (active organization for project listing)
 - `DATUM_PROJECT` (active project for every project-scoped tool; wins over one saved by `projects set`)
-- `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated allowlist, e.g. `dns`; unset means every toolset; see "Toolsets" below)
-- `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
+- `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated toolsets loaded at startup, e.g. `dns`, or `all`; unset means `alb,dns,network`; see "Toolsets" below)
+- `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated toolsets that can't be loaded at all, e.g. `billing,iam`; see "Toolsets" below)
 
 ### Running fully non-interactively (CI, an agent-hosted deployment, etc.)
 Set **both** `DATUM_TOKEN` and `DATUM_API_HOSTNAME` (e.g. `api.datum.net`). Both are required together — `DATUM_TOKEN`
@@ -100,6 +100,8 @@ Every `list` action accepts:
   `null` once a project is active). Orgs/projects are capped at 500 each — `*_truncated` flags say when to page via the
   dedicated `list` instead. A lookup that fails (e.g. an identity that can't list organizations) goes in `warnings`
   rather than failing the call.
+- **toolsets** — `list` | `load` (`names`, e.g. `["alb", "compute"]`). Loads toolsets mid-session; see "Toolsets" below.
+  Its description lists every toolset not loaded yet, so an agent can see what else the server can do.
 - **resource** (generic escape hatch) — `list` | `get` | `create` | `update` | `delete` for any kind without a
   dedicated tool, under `*.datumapis.com`/`*.miloapis.com` or the Gateway API groups (everything else, e.g. core
   Kubernetes machinery, RBAC, is refused). Adds `group`, `kind` (required), `namespace` (required if the kind is
@@ -222,25 +224,37 @@ Activity's own read-only query tools, mounted from [activity](https://github.com
 - `billingaccounts`, `invoices` — `list` | `get`. Namespaced.
 
 ## Toolsets
-Every tool outside the core set (organizations, projects, users, domains, apis, context) belongs to an optional
+Every tool outside the core set (organizations, projects, users, domains, apis, context, toolsets) belongs to an optional
 toolset: `activity`, `alb`, `billing`, `compute`, `dns`, `iam`, `ipam`, `network`, `resource`, `search`, `services`,
 `vpc`. A service's write tools share its toolset with its agent tools, so one name covers the whole service (e.g.
 `dns` is `dnszones`/`dnsrecordsets`/`dnszoneclasses` plus every `dns_*` tool and `dns-*` prompt).
 
+Only `alb`, `dns` and `network` are loaded at startup by default: 39 tools instead of the 75 with everything. The rest load
+mid-session: the `toolsets` tool (`action: "load"`, `names: ["compute"]`) registers a toolset's tools, guide and prompts on
+the running server, and the client is sent `notifications/tools/list_changed` so it picks them up without a restart.
+The `toolsets` tool's description lists every toolset not loaded yet, with what it covers. In http mode one server
+serves every session, so a toolset one session loads is loaded for all of them.
+
+List every toolset, and whether it loads at startup under your current environment:
+```bash
+datum-mcp --list-toolsets
+```
+
 Both variables are comma-separated and case-insensitive:
-- `DATUM_MCP_ENABLE_TOOLSETS` registers only the toolsets it names, plus core. Use it to keep the tool list small
-  when this server runs alongside others: `DATUM_MCP_ENABLE_TOOLSETS=dns` is 19 tools instead of 74, and
-  `DATUM_MCP_ENABLE_TOOLSETS=core` is the 6 core tools alone. Unset means every toolset.
-- `DATUM_MCP_DISABLE_TOOLSETS` then removes toolsets from that, e.g. `DATUM_MCP_DISABLE_TOOLSETS=billing,iam,resource`.
+- `DATUM_MCP_ENABLE_TOOLSETS` is what loads at startup, plus core. `all` is every toolset, `core` is the 7 core tools
+  alone, and unset is `alb,dns,network`. Set it to the toolsets you always use if your client doesn't pick up tool list
+  changes (the `toolsets` tool's reply says what to set when they don't appear).
+- `DATUM_MCP_DISABLE_TOOLSETS` takes toolsets away from that, and they can't be loaded with `toolsets` either, e.g.
+  `DATUM_MCP_DISABLE_TOOLSETS=billing,iam,resource`. `all` leaves core and nothing else.
 
 Core can't be disabled. An unknown toolset name is ignored with a warning on stderr. The `deploy-http-proxy` prompt is
-offered only when `alb` and `network` are both enabled, and `configure-dns` only when `dns` is.
+offered once `alb` and `network` are both loaded, and `configure-dns` once `dns` is.
 
-The server's `instructions` (sent at `initialize`) list every toolset, split into those on and those turned off in
-this session, so an agent can tell the user what to enable instead of not knowing a toolset exists. The `alb`,
+The server's `instructions` (sent at `initialize`) list every toolset, split into those loaded, those that can be
+loaded, and those turned off, so an agent loads what a task needs instead of not knowing a toolset exists. The `alb`,
 `network`, `compute`, `dns` and `activity` guides were written for Datum's in-product assistant, where "hand off to
-Compute" means another agent; each guide's preamble maps those hand-offs onto the other toolsets' guides here, or
-says the toolset is turned off.
+Compute" means another agent; each guide's preamble maps those hand-offs onto the other toolsets' guides here, says how to
+load one that isn't loaded, or says it's turned off.
 
 ## Prompts
 - `deploy-http-proxy` (`backend_service`, `backend_port` — a port name, optional `path_prefix`) — expose a backend via an

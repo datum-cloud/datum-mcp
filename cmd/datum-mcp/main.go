@@ -18,6 +18,7 @@ func newRootCmd() *cobra.Command {
 	var host string
 	var port int
 	var allowNonLoopback bool
+	var listToolsets bool
 
 	cmd := &cobra.Command{
 		Use:   "datum-mcp",
@@ -28,6 +29,9 @@ func newRootCmd() *cobra.Command {
 			// Flags parsed fine, so usage won't help with anything that
 			// fails from here on.
 			cmd.SilenceUsage = true
+			if listToolsets {
+				return server.PrintToolsets(cmd.OutOrStdout())
+			}
 			if err := checkHeadlessConfig(); err != nil {
 				return err
 			}
@@ -49,6 +53,8 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().IntVar(&port, "port", 8000, "http port")
 	cmd.Flags().BoolVar(&allowNonLoopback, "allow-non-loopback", false,
 		"allow http mode to bind a non-loopback host (DANGEROUS: this transport has no authentication or Origin check of its own)")
+	cmd.Flags().BoolVar(&listToolsets, "list-toolsets", false,
+		"print every toolset, whether it loads at startup with the current DATUM_MCP_ENABLE_TOOLSETS / DATUM_MCP_DISABLE_TOOLSETS, and what it covers, then exit")
 
 	return cmd
 }

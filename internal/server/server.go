@@ -156,7 +156,8 @@ type crudResource struct {
 	// kind a user can inspect and release but never directly create).
 	Actions []Action
 	// Toolset gates registration behind DATUM_MCP_ENABLE_TOOLSETS /
-	// DATUM_MCP_DISABLE_TOOLSETS. "" means core: always registered.
+	// DATUM_MCP_DISABLE_TOOLSETS and the 'toolsets' tool. "" means core:
+	// always registered.
 	Toolset string
 }
 
@@ -240,6 +241,22 @@ func (r crudResource) annotations() *mcp.ToolAnnotations {
 		DestructiveHint: &destructive,
 		IdempotentHint:  false,
 	}
+}
+
+// register adds the resource's tool to s.
+func (r crudResource) register(s *mcp.Server) {
+	schema, err := r.inputSchema()
+	if err != nil {
+		// RoutedInput is a fixed struct: this only fails if it stops
+		// being one jsonschema can describe, which every test would catch.
+		panic(fmt.Sprintf("%s input schema: %v", r.Tool, err))
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        r.Tool,
+		Description: r.description(),
+		InputSchema: schema,
+		Annotations: r.annotations(),
+	}, r.handler)
 }
 
 func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
@@ -423,26 +440,41 @@ var crudResources = []crudResource{
 	{Tool: "invoices", Group: "billing.miloapis.com", Kind: "Invoice", Namespace: "default", Actions: []Action{ActionList, ActionGet}, Toolset: "billing"},
 }
 
-// toolsetSelection is which optional toolsets get registered:
-// DATUM_MCP_ENABLE_TOOLSETS (an allowlist; unset means every toolset), then
-// DATUM_MCP_DISABLE_TOOLSETS taken away from that. Core (Toolset "") is
-// always registered and isn't named in either list.
+// toolsetSelection is which optional toolsets this server has.
+// DATUM_MCP_ENABLE_TOOLSETS is what's loaded at startup (unset means
+// defaultToolsets, "all" means every one); anything else can be loaded
+// mid-session with the 'toolsets' tool. DATUM_MCP_DISABLE_TOOLSETS is taken
+// away from both: a disabled toolset is neither loaded nor loadable. Core
+// (Toolset "") is always registered and isn't named in either list.
 type toolsetSelection struct {
-	enable  map[string]bool // nil: every toolset
+	enable  map[string]bool
 	disable map[string]bool
 }
 
+// defaultToolsets is what's loaded at startup when DATUM_MCP_ENABLE_TOOLSETS
+// is unset. Every other toolset is one 'toolsets' action=load away, so this is
+// kept small: the full set is 75 tools, and a client pays for every listed
+// tool in context each session whether it's called or not.
+var defaultToolsets = []string{"alb", "dns", "network"}
+
 func selectedToolsets() toolsetSelection {
+	enable := parseToolsets(os.Getenv("DATUM_MCP_ENABLE_TOOLSETS"))
+	if enable == nil {
+		enable = map[string]bool{}
+		for _, t := range defaultToolsets {
+			enable[t] = true
+		}
+	}
 	return toolsetSelection{
-		enable:  parseToolsets(os.Getenv("DATUM_MCP_ENABLE_TOOLSETS")),
+		enable:  enable,
 		disable: parseToolsets(os.Getenv("DATUM_MCP_DISABLE_TOOLSETS")),
 	}
 }
 
 // parseToolsets reads a comma-separated toolset list, case-insensitively.
 // It returns nil only for an empty value, so DATUM_MCP_ENABLE_TOOLSETS=core
-// still means "core only" rather than "everything". "core" itself is dropped:
-// it's never optional.
+// still means "core only" rather than the default. "core" itself is dropped:
+// it's never optional. "all" stands for every toolset.
 func parseToolsets(v string) map[string]bool {
 	if strings.TrimSpace(v) == "" {
 		return nil
@@ -450,21 +482,30 @@ func parseToolsets(v string) map[string]bool {
 	set := map[string]bool{}
 	for _, t := range strings.Split(v, ",") {
 		t = strings.ToLower(strings.TrimSpace(t))
-		if t != "" && t != "core" {
+		switch t {
+		case "", "core":
+		case "all":
+			for _, k := range knownToolsets() {
+				set[k] = true
+			}
+		default:
 			set[t] = true
 		}
 	}
 	return set
 }
 
+// on reports whether a toolset is loaded at startup.
 func (s toolsetSelection) on(toolset string) bool {
 	if toolset == "" {
 		return true
 	}
-	if s.enable != nil && !s.enable[toolset] {
-		return false
-	}
-	return !s.disable[toolset]
+	return s.enable[toolset] && !s.disable[toolset]
+}
+
+// loadable reports whether a toolset can be loaded at all, now or later.
+func (s toolsetSelection) loadable(toolset string) bool {
+	return toolset == "" || !s.disable[toolset]
 }
 
 // unknown returns the names in either list that aren't a toolset, so a typo
@@ -740,49 +781,8 @@ func NewMCPServer() *mcp.Server {
 		log.Printf("ignoring unknown toolsets %s; known toolsets: %s", strings.Join(unknown, ", "), strings.Join(knownToolsets(), ", "))
 	}
 	for _, r := range crudResources {
-		if !toolsets.on(r.Toolset) {
-			continue
-		}
-		schema, err := r.inputSchema()
-		if err != nil {
-			// RoutedInput is a fixed struct: this only fails if it stops
-			// being one jsonschema can describe, which every test would catch.
-			panic(fmt.Sprintf("%s input schema: %v", r.Tool, err))
-		}
-		mcp.AddTool(s, &mcp.Tool{
-			Name:        r.Tool,
-			Description: r.description(),
-			InputSchema: schema,
-			Annotations: r.annotations(),
-		}, r.handler)
-	}
-
-	if toolsets.on("resource") {
-		resourceDestructive := true
-		mcp.AddTool(s, &mcp.Tool{
-			Name:        "resource",
-			Description: resourceToolDescription,
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &resourceDestructive, IdempotentHint: false},
-		}, toolResource)
-	}
-
-	if toolsets.on("activity") {
-		activityDestructive := true
-		mcp.AddTool(s, &mcp.Tool{
-			Name:        "activity",
-			Description: activityToolDescription,
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &activityDestructive, IdempotentHint: false},
-		}, toolActivity)
-	}
-
-	for _, t := range agentToolsets {
-		if !toolsets.on(t.Name) {
-			continue
-		}
-		// Only fails if a service shipped without its embedded documents;
-		// serve everything else rather than nothing.
-		if err := t.register(s, toolsets); err != nil {
-			log.Printf("%s toolset disabled: %v", t.Name, err)
+		if r.Toolset == "" {
+			r.register(s)
 		}
 	}
 
@@ -793,7 +793,14 @@ func NewMCPServer() *mcp.Server {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &contextDestructive, IdempotentHint: true},
 	}, toolContext)
 
-	registerPrompts(s, toolsets)
+	loader := newToolsetLoader(s, toolsets)
+	for _, name := range knownToolsets() {
+		if toolsets.on(name) {
+			loader.load(name)
+		}
+	}
+	loader.registerTool()
+	registerPrompts(s, loader.isLoaded)
 
 	return s
 }

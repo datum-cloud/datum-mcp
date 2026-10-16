@@ -33,7 +33,7 @@ func instructions(t *testing.T) string {
 }
 
 func TestInstructionsListEveryToolsetByDefault(t *testing.T) {
-	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	got := instructions(t)
 	for _, name := range knownToolsets() {
@@ -49,11 +49,11 @@ func TestInstructionsListEveryToolsetByDefault(t *testing.T) {
 	}
 }
 
-func TestInstructionsNameTurnedOffToolsetsAndHowToEnableThem(t *testing.T) {
-	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+func TestInstructionsNameDisabledToolsetsAsOff(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "alb,compute")
 	got := instructions(t)
-	on, off, found := strings.Cut(got, "Turned off in this session")
+	on, off, found := strings.Cut(got, "Turned off by DATUM_MCP_DISABLE_TOOLSETS")
 	if !found {
 		t.Fatalf("expected a turned-off section, got:\n%s", got)
 	}
@@ -63,17 +63,48 @@ func TestInstructionsNameTurnedOffToolsetsAndHowToEnableThem(t *testing.T) {
 		}
 	}
 	if !strings.Contains(on, "- dns: ") {
-		t.Errorf("expected dns still listed as on")
+		t.Errorf("expected dns still listed as loaded")
 	}
-	if !strings.Contains(off, "DATUM_MCP_ENABLE_TOOLSETS") {
-		t.Errorf("expected the instructions to say how to turn a toolset on")
+	if strings.Contains(got, "Not loaded yet") {
+		t.Errorf("expected nothing listed as loadable with every allowed toolset loaded")
+	}
+}
+
+// With the lean default, the instructions have to make the rest of the
+// server visible, or an agent tells the user a task can't be done.
+func TestInstructionsByDefaultListWhatCanBeLoaded(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "billing")
+	got := instructions(t)
+	on, rest, found := strings.Cut(got, "Not loaded yet")
+	if !found {
+		t.Fatalf("expected a not-loaded section, got:\n%s", got)
+	}
+	available, off, _ := strings.Cut(rest, "Turned off by")
+	for _, name := range defaultToolsets {
+		if !strings.Contains(on, "- "+name+": ") {
+			t.Errorf("expected default toolset %q listed as loaded", name)
+		}
+	}
+	for _, name := range []string{"compute", "activity", "iam"} {
+		if !strings.Contains(available, "- "+name+": ") {
+			t.Errorf("expected %q listed as loadable", name)
+		}
+	}
+	if !strings.Contains(off, "- billing: ") || strings.Contains(available, "- billing: ") {
+		t.Errorf("expected billing listed only as turned off")
+	}
+	for _, want := range []string{"'toolsets' action=load", "DATUM_MCP_ENABLE_TOOLSETS"} {
+		if !strings.Contains(available, want) {
+			t.Errorf("expected the not-loaded section to mention %q", want)
+		}
 	}
 }
 
 // Each service's documents tell the assistant to "hand off" to another
 // service's agent; here that has to mean the other toolset on this server.
 func TestEveryGuideMapsHandOffsToTheOtherToolsets(t *testing.T) {
-	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	cs := connect(t)
 	for _, ts := range agentToolsets {
@@ -100,7 +131,7 @@ func TestEveryGuideMapsHandOffsToTheOtherToolsets(t *testing.T) {
 }
 
 func TestHandOffsToATurnedOffToolsetSayItsOff(t *testing.T) {
-	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "compute")
 	text, _ := guideText(t, connect(t), "network_guide", map[string]any{})
 	pre, _, _ := strings.Cut(text, "\n---\n")
@@ -112,8 +143,21 @@ func TestHandOffsToATurnedOffToolsetSayItsOff(t *testing.T) {
 	}
 }
 
-func TestSkillPromptsCarryTheHandOffMapping(t *testing.T) {
+func TestHandOffsToAnUnloadedToolsetSayHowToLoadIt(t *testing.T) {
 	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	text, _ := guideText(t, connect(t), "network_guide", map[string]any{})
+	pre, _, _ := strings.Cut(text, "\n---\n")
+	if !strings.Contains(pre, `Compute -> compute_guide, then its tools, after loading them with 'toolsets' action=load names=["compute"]`) {
+		t.Errorf("expected the mapping to say how to load compute, got:\n%s", pre)
+	}
+	if !strings.Contains(pre, "DNS -> dns_guide, then its tools;") {
+		t.Errorf("expected a plain pointer at dns_guide, which is loaded by default, got:\n%s", pre)
+	}
+}
+
+func TestSkillPromptsCarryTheHandOffMapping(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	cs := connect(t)
 	ctx := context.Background()

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -18,6 +19,11 @@ import (
 
 func TestMain(m *testing.M) {
 	keyring.MockInit()
+	// Tests see every toolset unless they set their own; the lean default
+	// has tests of its own.
+	if os.Getenv("DATUM_MCP_ENABLE_TOOLSETS") == "" {
+		os.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
+	}
 	// Never reach a real API from tests; ones that need an identity stub it.
 	whoAmI = func(context.Context) (api.Identity, error) { return api.Identity{}, errors.New("no API in tests") }
 	m.Run()

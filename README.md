@@ -60,6 +60,14 @@ claude mcp add --scope user datum-mcp -- datum-mcp
 
 **Windows** — point your client's config at the full install path, e.g. `command: "<path>\\datum-mcp.exe"`.
 
+## Toolsets
+To keep the tool list small, only the core tools plus the `alb`, `dns` and `network` toolsets load at startup (39 tools).
+Everything else (`activity`, `billing`, `compute`, `iam`, `ipam`, `resource`, `search`, `services`, `vpc`) is
+one call away: the agent loads what a task needs with the `toolsets` tool, mid-session. See every toolset and what it
+covers with `datum-mcp --list-toolsets`. Set `DATUM_MCP_ENABLE_TOOLSETS` (e.g. `dns,compute`, or `all`) to change what
+loads at startup, and `DATUM_MCP_DISABLE_TOOLSETS` to rule a toolset out entirely; see
+[Toolsets](docs/TOOLS.md#toolsets).
+
 ## Auth
 On first use, the server opens a browser for OAuth (PKCE) and stores credentials in the system keychain; later calls
 reuse/refresh the token automatically. For CI or headless use, see "Running fully non-interactively" in

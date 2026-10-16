@@ -1,16 +1,19 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // coreTools is everything registered with every optional toolset off.
-var coreTools = []string{"apis", "context", "domains", "organizations", "projects", "users"}
+var coreTools = []string{"apis", "context", "domains", "organizations", "projects", "toolsets", "users"}
 
 func toolNames(tools map[string]*mcp.Tool) []string {
 	out := make([]string, 0, len(tools))
@@ -79,7 +82,7 @@ func TestDisablingAServiceGatesItsWriteTools(t *testing.T) {
 	}
 	for toolset, writeTools := range cases {
 		t.Run(toolset, func(t *testing.T) {
-			t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+			t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 			t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", toolset)
 			tools := listedTools(t, connect(t))
 			for _, name := range writeTools {
@@ -105,7 +108,7 @@ func TestUnknownToolsetsAreReported(t *testing.T) {
 // A field none of a tool's actions read is left out of its schema, and every
 // field one of them does read is kept.
 func TestCrudInputSchemasCarryOnlyTheirActionsFields(t *testing.T) {
-	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	tools := listedTools(t, connect(t))
 	for _, r := range crudResources {
@@ -153,7 +156,7 @@ const (
 )
 
 func TestToolListStaysWithinBudget(t *testing.T) {
-	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	var visible, wire int
 	for _, tool := range listedTools(t, connect(t)) {
@@ -178,3 +181,168 @@ func TestToolListStaysWithinBudget(t *testing.T) {
 }
 
 const budgetHint = "trim the new text (or gate it behind a toolset), or raise the budget in this PR and say why"
+
+func TestDefaultLoadsOnlyCoreAndTheDefaultToolsets(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	tools := listedTools(t, connect(t))
+	for _, name := range append([]string{"dnszones", "dns_guide", "networkservices", "network_guide", "httpproxies", "alb_guide"}, coreTools...) {
+		if tools[name] == nil {
+			t.Errorf("expected %q loaded by default", name)
+		}
+	}
+	for _, name := range []string{"workloads", "compute_guide", "resource", "activity", "ipclasses"} {
+		if tools[name] != nil {
+			t.Errorf("expected %q not loaded by default", name)
+		}
+	}
+	desc := tools["toolsets"].Description
+	for _, name := range []string{"compute", "activity", "resource"} {
+		if !strings.Contains(desc, "- "+name+": ") {
+			t.Errorf("expected the toolsets tool to list %q as loadable, got:\n%s", name, desc)
+		}
+	}
+	if strings.Contains(desc, "- dns: ") || strings.Contains(desc, "- alb: ") {
+		t.Errorf("expected the toolsets tool not to list dns or alb, which are loaded")
+	}
+	if listedPrompts(t, connect(t))["deploy-http-proxy"] == nil {
+		t.Errorf("expected deploy-http-proxy by default: alb and network are both loaded")
+	}
+}
+
+// connectNotified is connect with a client that counts tools/list_changed
+// notifications.
+func connectNotified(t *testing.T) (*mcp.ClientSession, chan struct{}) {
+	t.Helper()
+	ctx := context.Background()
+	changed := make(chan struct{}, 8)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	if _, err := NewMCPServer().Connect(ctx, serverTransport, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, &mcp.ClientOptions{
+		ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) { changed <- struct{}{} },
+	}).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs, changed
+}
+
+func TestLoadingAToolsetMidSessionAddsItsToolsAndTellsTheClient(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "dns,network")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	cs, changed := connectNotified(t)
+	if listedPrompts(t, cs)["deploy-http-proxy"] != nil {
+		t.Fatalf("expected deploy-http-proxy gated off before alb is loaded")
+	}
+
+	text, isErr := guideText(t, cs, "toolsets", map[string]any{"action": "load", "names": []string{"ALB", "dns"}})
+	if isErr {
+		t.Fatalf("unexpected error: %s", text)
+	}
+	var res ToolsetsLoadResult
+	if err := json.Unmarshal([]byte(text), &res); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(res.Loaded, []string{"alb"}) || !reflect.DeepEqual(res.AlreadyLoaded, []string{"dns"}) {
+		t.Errorf("expected alb loaded and dns already loaded, got %+v", res)
+	}
+	if !strings.Contains(res.NextStep, "alb_guide") || !strings.Contains(res.NextStep, "DATUM_MCP_ENABLE_TOOLSETS=alb,dns,network") {
+		t.Errorf("expected next_step to point at alb_guide and the restart fallback, got %q", res.NextStep)
+	}
+
+	select {
+	case <-changed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a tools/list_changed notification")
+	}
+	tools := listedTools(t, cs)
+	for _, name := range append([]string{"httpproxies", "gateways"}, albToolNames...) {
+		if tools[name] == nil {
+			t.Errorf("expected %q after loading alb", name)
+		}
+	}
+	if strings.Contains(tools["toolsets"].Description, "- alb: ") {
+		t.Errorf("expected the toolsets tool to stop listing alb once it's loaded")
+	}
+	if listedPrompts(t, cs)["deploy-http-proxy"] == nil {
+		t.Errorf("expected deploy-http-proxy once alb and network are both loaded")
+	}
+}
+
+func TestDisabledToolsetsCantBeLoaded(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "billing")
+	cs := connect(t)
+	text, isErr := guideText(t, cs, "toolsets", map[string]any{"action": "load", "names": []string{"iam", "billing"}})
+	if !isErr || !strings.Contains(text, "DATUM_MCP_DISABLE_TOOLSETS") {
+		t.Errorf("expected loading billing to fail naming DATUM_MCP_DISABLE_TOOLSETS, got: %s", text)
+	}
+	if tools := listedTools(t, cs); tools["billingaccounts"] != nil || tools["roles"] != nil {
+		t.Errorf("expected a refused load to load nothing, iam included")
+	}
+	if strings.Contains(listedTools(t, cs)["toolsets"].Description, "- billing: ") {
+		t.Errorf("expected the toolsets tool not to offer billing")
+	}
+
+	text, _ = guideText(t, cs, "toolsets", map[string]any{"action": "list"})
+	var list struct {
+		Toolsets []ToolsetInfo `json:"toolsets"`
+	}
+	if err := json.Unmarshal([]byte(text), &list); err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]string{}
+	for _, ts := range list.Toolsets {
+		states[ts.Name] = ts.State
+	}
+	if states["billing"] != "disabled" || states["dns"] != "loaded" || states["compute"] != "available" {
+		t.Errorf("expected billing disabled, dns loaded, compute available, got %v", states)
+	}
+}
+
+func TestLoadingAnUnknownToolsetNamesTheKnownOnes(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	text, isErr := guideText(t, connect(t), "toolsets", map[string]any{"action": "load", "names": []string{"dnz"}})
+	if !isErr || !strings.Contains(text, "known toolsets: activity, alb") {
+		t.Errorf("expected an unknown-toolset error listing the known ones, got: %s", text)
+	}
+}
+
+func TestEnableAllLoadsEverything(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "all")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	sel := selectedToolsets()
+	for _, name := range knownToolsets() {
+		if !sel.on(name) {
+			t.Errorf("expected %q on with all", name)
+		}
+	}
+	if len(sel.unknown()) != 0 {
+		t.Errorf("expected all not to be reported as unknown, got %v", sel.unknown())
+	}
+}
+
+// defaultVisibleBudget is the model-visible tool list with the default
+// toolsets: what a fresh client pays before its first call.
+const defaultVisibleBudget = 48_000
+
+func TestDefaultToolListStaysWithinBudget(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	tools := listedTools(t, connect(t))
+	visible := 0
+	for _, tool := range tools {
+		in, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		visible += len(tool.Name) + len(tool.Description) + len(in)
+	}
+	t.Logf("default tools/list: %d tools, %d bytes model-visible (~%dK tokens)", len(tools), visible, visible*10/39/1000)
+	if visible > defaultVisibleBudget {
+		t.Errorf("default model-visible tool list is %d bytes, over the %d budget: %s", visible, defaultVisibleBudget, budgetHint)
+	}
+}
