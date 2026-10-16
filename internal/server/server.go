@@ -17,7 +17,6 @@ import (
 
 	"github.com/datum-cloud/datum-mcp/internal/api"
 	"github.com/datum-cloud/datum-mcp/internal/auth"
-	"github.com/datum-cloud/datum-mcp/internal/authutil"
 	"github.com/datum-cloud/datum-mcp/internal/org"
 	"github.com/datum-cloud/datum-mcp/internal/project"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -107,15 +106,14 @@ type UsersInput struct {
 	ListParams
 }
 
-func resolveProjectName(override string) (string, error) {
+func resolveProjectName(ctx context.Context, override string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
-	p, _ := project.GetActive()
-	if p == "" {
-		return "", fmt.Errorf("no active project set; pass 'project' in request or call projects action set")
+	if p, _ := activeProjectOrEmpty(ctx); p != "" {
+		return p, nil
 	}
-	return p, nil
+	return "", fmt.Errorf("no active project set; pass 'project' in request, set DATUM_PROJECT env, or call projects action set")
 }
 
 func resolveOrgName(override string) (string, error) {
@@ -248,7 +246,7 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return errResult(err, nil)
 	}
-	p, err := resolveProjectName(in.Project)
+	p, err := resolveProjectName(ctx, in.Project)
 	if err != nil {
 		return errResult(err, suggestListProjects())
 	}
@@ -516,13 +514,12 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return errResult(err, nil)
 	}
-	userID := os.Getenv("DATUM_USER_ID")
-	if userID == "" {
-		var err error
-		userID, err = authutil.GetSubject()
-		if err != nil {
-			return errResult(fmt.Errorf("failed to determine user ID: %w", err), nil)
-		}
+	if a == "get" {
+		return okResult(map[string]string{"organization": activeOrgOrEmpty()})
+	}
+	userID, err := currentUserID()
+	if err != nil {
+		return discoveryErr(ctx, err)
 	}
 	ucli, err := api.NewUserControlPlaneClient(ctx, userID)
 	if err != nil {
@@ -532,7 +529,7 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 	case "list":
 		list, err := api.FetchList(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "", in.ListParams.toAPIOptions())
 		if err != nil {
-			return errResult(err, nil)
+			return discoveryErr(ctx, err)
 		}
 		return okResult(listEnvelope(list))
 	case "set":
@@ -545,7 +542,7 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 		// membership just because the caller has more than one page of them.
 		memItems, err := api.FetchAllItems(ctx, ucli, "resourcemanager.miloapis.com", "OrganizationMembership", "")
 		if err != nil {
-			return errResult(err, nil)
+			return discoveryErr(ctx, err)
 		}
 		allowed := false
 		for _, it := range memItems {
@@ -562,12 +559,6 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 			return errResult(err, nil)
 		}
 		return okResult(map[string]string{"organization": name})
-	case "get":
-		if v := os.Getenv("DATUM_ORG"); v != "" {
-			return okResult(map[string]string{"organization": v})
-		}
-		o, _ := org.GetActive()
-		return okResult(map[string]string{"organization": o})
 	default:
 		return errResult(fmt.Errorf("unsupported organizations action: %s", in.Action), suggestActions("organizations", "list|get|set"))
 	}
@@ -579,8 +570,28 @@ func toolProjects(ctx context.Context, _ *mcp.CallToolRequest, in ProjectsInput)
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return errResult(err, nil)
 	}
+	switch a {
+	case "get":
+		p, source := activeProjectOrEmpty(ctx)
+		return okResult(map[string]string{"project": p, "source": source})
+	case "set":
+		name, _ := in.Body["name"].(string)
+		if name == "" {
+			return errResult(fmt.Errorf("invalid params: body.name is required"), nil)
+		}
+		if suggestion, err := verifyProject(ctx, in.Org, name); err != nil {
+			return errResult(err, suggestion)
+		}
+		if err := project.SetActive(name); err != nil {
+			return errResult(fmt.Errorf("couldn't save %q as the active project (%w); set DATUM_PROJECT=%s instead", name, err, name), nil)
+		}
+		return okResult(map[string]string{"project": name})
+	}
 	orgName, err := resolveOrgName(in.Org)
 	if err != nil {
+		if serviceAccountProject(ctx) != "" {
+			return discoveryErr(ctx, err)
+		}
 		return errResult(err, suggestListOrgs())
 	}
 	cli, err := api.NewOrgControlPlaneClient(ctx, orgName)
@@ -591,7 +602,7 @@ func toolProjects(ctx context.Context, _ *mcp.CallToolRequest, in ProjectsInput)
 	case "list":
 		list, err := api.FetchList(ctx, cli, "resourcemanager.miloapis.com", "Project", "", in.ListParams.toAPIOptions())
 		if err != nil {
-			return errResult(err, nil)
+			return discoveryErr(ctx, err)
 		}
 		return okResult(listEnvelope(list))
 	case "create":
@@ -603,35 +614,6 @@ func toolProjects(ctx context.Context, _ *mcp.CallToolRequest, in ProjectsInput)
 			return errResult(err, nil)
 		}
 		return okResult(withDryRunNote(api.CleanObject(obj), in.DryRun))
-	case "set":
-		name, _ := in.Body["name"].(string)
-		if name == "" {
-			return errResult(fmt.Errorf("invalid params: body.name is required"), nil)
-		}
-		// Membership verification always checks the full set, independent of
-		// any list-only pagination the caller passed in, and must not miss a
-		// project just because the org has more than one page of them.
-		pitems, err := api.FetchAllItems(ctx, cli, "resourcemanager.miloapis.com", "Project", "")
-		if err != nil {
-			return errResult(err, nil)
-		}
-		found := false
-		for _, it := range pitems {
-			if strings.EqualFold(it.GetName(), name) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return errResult(fmt.Errorf("project %q not found in org %q", name, orgName), suggestListProjects())
-		}
-		if err := project.SetActive(name); err != nil {
-			return errResult(err, nil)
-		}
-		return okResult(map[string]string{"project": name})
-	case "get":
-		p, _ := project.GetActive()
-		return okResult(map[string]string{"project": p})
 	default:
 		return errResult(fmt.Errorf("unsupported projects action: %s", in.Action), suggestActions("projects", "list|get|set|create"))
 	}
@@ -671,7 +653,7 @@ func toolAPIs(ctx context.Context, _ *mcp.CallToolRequest, in APIInfoInput) (*mc
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return errResult(err, nil)
 	}
-	p, err := resolveProjectName(in.Project)
+	p, err := resolveProjectName(ctx, in.Project)
 	if err != nil {
 		return errResult(err, suggestListProjects())
 	}
@@ -720,16 +702,17 @@ func NewMCPServer() *mcp.Server {
 			"(directly, via 'org', or via DATUM_ORG env). Actions: list (your organization memberships, paginated: default 100/page, " +
 			"max 500; limit/continue/labelSelector/fieldSelector) | get (currently active org) | set (name: '<org-id>', verified against " +
 			"your memberships). Typical sequence: list -> pick an org -> set. " +
-			"If a tool fails with \"no active organization set\", call this tool with action=list, choose one, then action=set.",
+			"If a tool fails with \"no active organization set\", call this tool with action=list, choose one, then action=set. " +
+			"Service accounts can't list organizations and don't need one: their own project is used by default.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &notDestructive, IdempotentHint: true},
 	}, toolOrganizationMemberships)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "projects",
 		Description: "Discover, switch, and create Datum Cloud projects within an organization. Most resource tools (domains, dnszones, etc.) " +
-			"require an active project. Actions: list (org required, via 'org' field or active org; paginated: default 100/page, max 500; " +
-			"limit/continue/labelSelector/fieldSelector) | get (currently active project) | set (body.name: '<project-id>', verified to exist " +
-			"in the org) | create (body: Project manifest; dryRun to validate without persisting). " +
+			"require an active project: DATUM_PROJECT env, else the one set here, else a service account's own project. Actions: list (org " +
+			"required, via 'org' field or active org; paginated: default 100/page, max 500; limit/continue/labelSelector/fieldSelector) | " +
+			"get (active project and its source) | set (body.name: '<project-id>', verified to exist; no org needed if you know the id) | create (body: Project manifest; dryRun to validate without persisting). " +
 			"Typical sequence: organizations set -> projects list -> projects set. " +
 			"If a tool fails with \"no active project set\", call this tool with action=list then action=set.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &notDestructive, IdempotentHint: false},

@@ -26,6 +26,7 @@ installation and quick start.
 - `DATUM_VERBOSE` (`true` to print verbose auth logs)
 - `DATUM_USER_ID` (override user subject; otherwise from stored credentials)
 - `DATUM_ORG` (active organization for project listing)
+- `DATUM_PROJECT` (active project for every project-scoped tool; wins over one saved by `projects set`)
 - `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated allowlist, e.g. `dns`; unset means every toolset; see "Toolsets" below)
 - `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
 
@@ -36,6 +37,14 @@ derive it from, startup fails fast with an error telling you to also set `DATUM_
 opened on its account). With both env vars set, no keychain access and no browser is ever needed. `DATUM_USER_ID` is
 also required for `organizations` `list`/`set` (which need a user ID to query memberships), since there's no
 stored-credentials subject to fall back on.
+
+### Running as a service account
+A service account is confined to its own project and can't list organizations or projects, so the usual
+`organizations` -> `projects` -> resource flow doesn't apply. It doesn't need to: with a service account's token in
+`DATUM_TOKEN`, the server asks the API who it is (a `SelfSubjectReview`) and uses that service account's own project
+whenever no other project is set. No `DATUM_ORG`, `DATUM_USER_ID` or `projects set` is needed; `context` and
+`projects` `get` report `"service account"` as the project's source. Set `DATUM_PROJECT` (or pass `project` on a
+call) to override it.
 
 ## Response and error format
 - **List** responses: `{ "items": [...], "count": N, "continue": "..." }` (`continue` is `""` when there's no next page).
@@ -65,8 +74,10 @@ Every `list` action accepts:
 - **organizations** — `list` | `get` | `set`. User resolution: `DATUM_USER_ID` env, else subject from stored credentials.
 - **users** — `list`. Org-scoped memberships: `{ "action": "list", "org": "<org-id>" }`.
 - **projects** — `list` | `get` | `set` | `create`. Org resolution: `org` input, else `DATUM_ORG`, else stored active org.
+  `list`/`create` need an org; `set` verifies against the org's projects when it can, else by fetching the project
+  directly, so it works without an org. `get` returns the active project and its `source`.
 - **domains** — `list` | `get` | `create` | `update` | `delete`. Namespace `default`. Project resolution: `project`
-  input, else active project (from `projects set`).
+  input, else `DATUM_PROJECT`, else active project (from `projects set`), else a service account's own project.
 - **networkservices** (toolset `network`) — same shape as `domains`. The backend an `httpproxies` rule routes to
   (`spec.rules[].backends[].networkService`) — a Workload never auto-creates one, including on redeploy, so
   create/verify it before creating the HTTPProxy. `spec.networkInterfaces.selector.matchLabels` typically targets
@@ -84,8 +95,10 @@ Every `list` action accepts:
 - **apis** — `list` | `get`. CRD discovery via upstream OpenAPI/`kubectl explain` logic. `list` returns
   groups/versions/resources; `get` returns the schema for a kind (`detail: "structure"` for a condensed shape).
 - **context** — no actions, call with `{}`. Stateless snapshot: `authenticated`, `active_organization`,
-  `active_project`, reachable orgs/projects, and `next_step` (the exact next tool call, `null` once a project is
-  active). Orgs/projects are capped at 500 each — `*_truncated` flags say when to page via the dedicated `list` instead.
+  `active_project` and its `project_source`, reachable orgs/projects, and `next_step` (the exact next tool call,
+  `null` once a project is active). Orgs/projects are capped at 500 each — `*_truncated` flags say when to page via the
+  dedicated `list` instead. A lookup that fails (e.g. an identity that can't list organizations) goes in `warnings`
+  rather than failing the call.
 - **resource** (generic escape hatch) — `list` | `get` | `create` | `update` | `delete` for any kind without a
   dedicated tool, under `*.datumapis.com`/`*.miloapis.com` or the Gateway API groups (everything else, e.g. core
   Kubernetes machinery, RBAC, is refused). Adds `group`, `kind` (required), `namespace` (required if the kind is

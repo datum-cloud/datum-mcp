@@ -149,7 +149,7 @@ func sortedSkillNames(skills map[string]agentSkill) []string {
 // one, under its own login. Project first: with none active there's nothing to
 // read, and no reason to open a browser login just to say so.
 func activeProject(ctx context.Context) (string, error) {
-	p, err := resolveProjectName("")
+	p, err := resolveProjectName(ctx, "")
 	if err != nil {
 		return "", err
 	}
