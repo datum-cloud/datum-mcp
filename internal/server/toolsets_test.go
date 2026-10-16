@@ -186,24 +186,27 @@ func TestDefaultLoadsOnlyCoreAndTheDefaultToolsets(t *testing.T) {
 	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	tools := listedTools(t, connect(t))
-	for _, name := range append([]string{"dnszones", "dns_guide", "networkservices", "network_guide"}, coreTools...) {
+	for _, name := range append([]string{"dnszones", "dns_guide", "networkservices", "network_guide", "httpproxies", "alb_guide"}, coreTools...) {
 		if tools[name] == nil {
 			t.Errorf("expected %q loaded by default", name)
 		}
 	}
-	for _, name := range []string{"httpproxies", "alb_guide", "workloads", "compute_guide", "resource", "activity", "ipclasses"} {
+	for _, name := range []string{"workloads", "compute_guide", "resource", "activity", "ipclasses"} {
 		if tools[name] != nil {
 			t.Errorf("expected %q not loaded by default", name)
 		}
 	}
 	desc := tools["toolsets"].Description
-	for _, name := range []string{"alb", "compute", "resource"} {
+	for _, name := range []string{"compute", "activity", "resource"} {
 		if !strings.Contains(desc, "- "+name+": ") {
 			t.Errorf("expected the toolsets tool to list %q as loadable, got:\n%s", name, desc)
 		}
 	}
-	if strings.Contains(desc, "- dns: ") {
-		t.Errorf("expected the toolsets tool not to list dns, which is loaded")
+	if strings.Contains(desc, "- dns: ") || strings.Contains(desc, "- alb: ") {
+		t.Errorf("expected the toolsets tool not to list dns or alb, which are loaded")
+	}
+	if listedPrompts(t, connect(t))["deploy-http-proxy"] == nil {
+		t.Errorf("expected deploy-http-proxy by default: alb and network are both loaded")
 	}
 }
 
@@ -228,7 +231,7 @@ func connectNotified(t *testing.T) (*mcp.ClientSession, chan struct{}) {
 }
 
 func TestLoadingAToolsetMidSessionAddsItsToolsAndTellsTheClient(t *testing.T) {
-	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "dns,network")
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	cs, changed := connectNotified(t)
 	if listedPrompts(t, cs)["deploy-http-proxy"] != nil {
@@ -295,8 +298,8 @@ func TestDisabledToolsetsCantBeLoaded(t *testing.T) {
 	for _, ts := range list.Toolsets {
 		states[ts.Name] = ts.State
 	}
-	if states["billing"] != "disabled" || states["dns"] != "loaded" || states["alb"] != "available" {
-		t.Errorf("expected billing disabled, dns loaded, alb available, got %v", states)
+	if states["billing"] != "disabled" || states["dns"] != "loaded" || states["compute"] != "available" {
+		t.Errorf("expected billing disabled, dns loaded, compute available, got %v", states)
 	}
 }
 
@@ -324,7 +327,7 @@ func TestEnableAllLoadsEverything(t *testing.T) {
 
 // defaultVisibleBudget is the model-visible tool list with the default
 // toolsets: what a fresh client pays before its first call.
-const defaultVisibleBudget = 36_000
+const defaultVisibleBudget = 48_000
 
 func TestDefaultToolListStaysWithinBudget(t *testing.T) {
 	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")

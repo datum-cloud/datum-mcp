@@ -453,9 +453,9 @@ type toolsetSelection struct {
 
 // defaultToolsets is what's loaded at startup when DATUM_MCP_ENABLE_TOOLSETS
 // is unset. Every other toolset is one 'toolsets' action=load away, so this is
-// kept small: the full set is ~74 tools, and a client pays for every listed
+// kept small: the full set is 75 tools, and a client pays for every listed
 // tool in context each session whether it's called or not.
-var defaultToolsets = []string{"dns", "network"}
+var defaultToolsets = []string{"alb", "dns", "network"}
 
 func selectedToolsets() toolsetSelection {
 	enable := parseToolsets(os.Getenv("DATUM_MCP_ENABLE_TOOLSETS"))

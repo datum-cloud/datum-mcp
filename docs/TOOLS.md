@@ -27,7 +27,7 @@ installation and quick start.
 - `DATUM_USER_ID` (override user subject; otherwise the `DATUM_TOKEN` user as the API reports it, else stored credentials)
 - `DATUM_ORG` (active organization for project listing)
 - `DATUM_PROJECT` (active project for every project-scoped tool; wins over one saved by `projects set`)
-- `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated toolsets loaded at startup, e.g. `dns`, or `all`; unset means `dns,network`; see "Toolsets" below)
+- `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated toolsets loaded at startup, e.g. `dns`, or `all`; unset means `alb,dns,network`; see "Toolsets" below)
 - `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated toolsets that can't be loaded at all, e.g. `billing,iam`; see "Toolsets" below)
 
 ### Running fully non-interactively (CI, an agent-hosted deployment, etc.)
@@ -229,8 +229,8 @@ toolset: `activity`, `alb`, `billing`, `compute`, `dns`, `iam`, `ipam`, `network
 `vpc`. A service's write tools share its toolset with its agent tools, so one name covers the whole service (e.g.
 `dns` is `dnszones`/`dnsrecordsets`/`dnszoneclasses` plus every `dns_*` tool and `dns-*` prompt).
 
-Only `dns` and `network` are loaded at startup by default: 29 tools instead of the 75 with everything. The rest load
-mid-session: the `toolsets` tool (`action: "load"`, `names: ["alb"]`) registers a toolset's tools, guide and prompts on
+Only `alb`, `dns` and `network` are loaded at startup by default: 39 tools instead of the 75 with everything. The rest load
+mid-session: the `toolsets` tool (`action: "load"`, `names: ["compute"]`) registers a toolset's tools, guide and prompts on
 the running server, and the client is sent `notifications/tools/list_changed` so it picks them up without a restart.
 The `toolsets` tool's description lists every toolset not loaded yet, with what it covers. In http mode one server
 serves every session, so a toolset one session loads is loaded for all of them.
@@ -242,7 +242,7 @@ datum-mcp --list-toolsets
 
 Both variables are comma-separated and case-insensitive:
 - `DATUM_MCP_ENABLE_TOOLSETS` is what loads at startup, plus core. `all` is every toolset, `core` is the 7 core tools
-  alone, and unset is `dns,network`. Set it to the toolsets you always use if your client doesn't pick up tool list
+  alone, and unset is `alb,dns,network`. Set it to the toolsets you always use if your client doesn't pick up tool list
   changes (the `toolsets` tool's reply says what to set when they don't appear).
 - `DATUM_MCP_DISABLE_TOOLSETS` takes toolsets away from that, and they can't be loaded with `toolsets` either, e.g.
   `DATUM_MCP_DISABLE_TOOLSETS=billing,iam,resource`. `all` leaves core and nothing else.

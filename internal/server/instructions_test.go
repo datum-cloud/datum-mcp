@@ -86,7 +86,7 @@ func TestInstructionsByDefaultListWhatCanBeLoaded(t *testing.T) {
 			t.Errorf("expected default toolset %q listed as loaded", name)
 		}
 	}
-	for _, name := range []string{"alb", "compute", "iam"} {
+	for _, name := range []string{"compute", "activity", "iam"} {
 		if !strings.Contains(available, "- "+name+": ") {
 			t.Errorf("expected %q listed as loadable", name)
 		}
