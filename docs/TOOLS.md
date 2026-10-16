@@ -24,8 +24,9 @@ installation and quick start.
 - `DATUM_CLIENT_ID` (inferred for *.datum.net and *.staging.env.datum.net)
 - `DATUM_TOKEN` (override bearer token; skips login)
 - `DATUM_VERBOSE` (`true` to print verbose auth logs)
-- `DATUM_USER_ID` (override user subject; otherwise from stored credentials)
+- `DATUM_USER_ID` (override user subject; otherwise the `DATUM_TOKEN` user as the API reports it, else stored credentials)
 - `DATUM_ORG` (active organization for project listing)
+- `DATUM_PROJECT` (active project for every project-scoped tool; wins over one saved by `projects set`)
 - `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated allowlist, e.g. `dns`; unset means every toolset; see "Toolsets" below)
 - `DATUM_MCP_DISABLE_TOOLSETS` (comma-separated, e.g. `billing,iam`; see "Toolsets" below)
 
@@ -33,9 +34,18 @@ installation and quick start.
 Set **both** `DATUM_TOKEN` and `DATUM_API_HOSTNAME` (e.g. `api.datum.net`). Both are required together — `DATUM_TOKEN`
 alone still needs the API hostname from somewhere, and without stored credentials from a prior interactive login to
 derive it from, startup fails fast with an error telling you to also set `DATUM_API_HOSTNAME` (no browser is ever
-opened on its account). With both env vars set, no keychain access and no browser is ever needed. `DATUM_USER_ID` is
-also required for `organizations` `list`/`set` (which need a user ID to query memberships), since there's no
-stored-credentials subject to fall back on.
+opened on its account). That includes a Linux box with no keyring service at all. With both env vars set, no keychain
+access and no browser is ever needed. `organizations` `list`/`set` need a user ID to query memberships; under
+`DATUM_TOKEN` it's the token's own user, as the API reports it (a `SelfSubjectReview`), so `DATUM_USER_ID` is only needed
+to override that.
+
+### Running as a service account
+A service account is confined to its own project and can't list organizations or projects, so the usual
+`organizations` -> `projects` -> resource flow doesn't apply. It doesn't need to: with a service account's token in
+`DATUM_TOKEN`, the server asks the API who it is (a `SelfSubjectReview`) and uses that service account's own project
+whenever no other project is set. No `DATUM_ORG`, `DATUM_USER_ID` or `projects set` is needed; `context` and
+`projects` `get` report `"service account"` as the project's source. Set `DATUM_PROJECT` (or pass `project` on a
+call) to override it.
 
 ## Response and error format
 - **List** responses: `{ "items": [...], "count": N, "continue": "..." }` (`continue` is `""` when there's no next page).
@@ -62,11 +72,13 @@ Every `list` action accepts:
 
 ## Tools
 
-- **organizations** — `list` | `get` | `set`. User resolution: `DATUM_USER_ID` env, else subject from stored credentials.
+- **organizations** — `list` | `get` | `set`. User resolution: `DATUM_USER_ID` env, else the `DATUM_TOKEN` user, else subject from stored credentials.
 - **users** — `list`. Org-scoped memberships: `{ "action": "list", "org": "<org-id>" }`.
 - **projects** — `list` | `get` | `set` | `create`. Org resolution: `org` input, else `DATUM_ORG`, else stored active org.
+  `list`/`create` need an org; `set` verifies against the org's projects when it can, else by fetching the project
+  directly, so it works without an org. `get` returns the active project and its `source`.
 - **domains** — `list` | `get` | `create` | `update` | `delete`. Namespace `default`. Project resolution: `project`
-  input, else active project (from `projects set`).
+  input, else `DATUM_PROJECT`, else active project (from `projects set`), else a service account's own project.
 - **networkservices** (toolset `network`) — same shape as `domains`. The backend an `httpproxies` rule routes to
   (`spec.rules[].backends[].networkService`) — a Workload never auto-creates one, including on redeploy, so
   create/verify it before creating the HTTPProxy. `spec.networkInterfaces.selector.matchLabels` typically targets
@@ -84,8 +96,10 @@ Every `list` action accepts:
 - **apis** — `list` | `get`. CRD discovery via upstream OpenAPI/`kubectl explain` logic. `list` returns
   groups/versions/resources; `get` returns the schema for a kind (`detail: "structure"` for a condensed shape).
 - **context** — no actions, call with `{}`. Stateless snapshot: `authenticated`, `active_organization`,
-  `active_project`, reachable orgs/projects, and `next_step` (the exact next tool call, `null` once a project is
-  active). Orgs/projects are capped at 500 each — `*_truncated` flags say when to page via the dedicated `list` instead.
+  `active_project` and its `project_source`, reachable orgs/projects, and `next_step` (the exact next tool call,
+  `null` once a project is active). Orgs/projects are capped at 500 each — `*_truncated` flags say when to page via the
+  dedicated `list` instead. A lookup that fails (e.g. an identity that can't list organizations) goes in `warnings`
+  rather than failing the call.
 - **resource** (generic escape hatch) — `list` | `get` | `create` | `update` | `delete` for any kind without a
   dedicated tool, under `*.datumapis.com`/`*.miloapis.com` or the Gateway API groups (everything else, e.g. core
   Kubernetes machinery, RBAC, is refused). Adds `group`, `kind` (required), `namespace` (required if the kind is
@@ -221,6 +235,12 @@ Both variables are comma-separated and case-insensitive:
 
 Core can't be disabled. An unknown toolset name is ignored with a warning on stderr. The `deploy-http-proxy` prompt is
 offered only when `alb` and `network` are both enabled, and `configure-dns` only when `dns` is.
+
+The server's `instructions` (sent at `initialize`) list every toolset, split into those on and those turned off in
+this session, so an agent can tell the user what to enable instead of not knowing a toolset exists. The `alb`,
+`network`, `compute`, `dns` and `activity` guides were written for Datum's in-product assistant, where "hand off to
+Compute" means another agent; each guide's preamble maps those hand-offs onto the other toolsets' guides here, or
+says the toolset is turned off.
 
 ## Prompts
 - `deploy-http-proxy` (`backend_service`, `backend_port` — a port name, optional `path_prefix`) — expose a backend via an

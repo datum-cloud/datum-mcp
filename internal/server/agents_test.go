@@ -216,7 +216,7 @@ func TestAgentToolsNeedAnActiveProjectBeforeLoggingIn(t *testing.T) {
 	// With no project active, every toolset's deps must fail on that alone -
 	// before EnsureAuth, which would otherwise open a browser login just to
 	// report there's nothing to read.
-	if _, err := resolveProjectName(""); err == nil {
+	if _, err := resolveProjectName(context.Background(), ""); err == nil {
 		t.Skip("an earlier test left an active project set; deps would go on to log in")
 	}
 	ctx := context.Background()

@@ -149,7 +149,7 @@ func sortedSkillNames(skills map[string]agentSkill) []string {
 // one, under its own login. Project first: with none active there's nothing to
 // read, and no reason to open a browser login just to say so.
 func activeProject(ctx context.Context) (string, error) {
-	p, err := resolveProjectName("")
+	p, err := resolveProjectName(ctx, "")
 	if err != nil {
 		return "", err
 	}
@@ -163,7 +163,7 @@ type GuideInput struct {
 	Skill string `json:"skill,omitempty" jsonschema:"Skill to load, by name from the list a call with no skill returns. Omit to get the orientation document and the list of skills."`
 }
 
-func (t agentToolset) guide(skills map[string]agentSkill) mcp.ToolHandlerFor[GuideInput, any] {
+func (t agentToolset) guide(skills map[string]agentSkill, preamble string) mcp.ToolHandlerFor[GuideInput, any] {
 	return func(_ context.Context, _ *mcp.CallToolRequest, in GuideInput) (*mcp.CallToolResult, any, error) {
 		name := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(in.Skill)), ".md")
 		if name == "" {
@@ -171,7 +171,7 @@ func (t agentToolset) guide(skills map[string]agentSkill) mcp.ToolHandlerFor[Gui
 			if err != nil {
 				return errResult(fmt.Errorf("reading embedded %s knowledge: %w", t.Name, err), nil)
 			}
-			return textResult(t.Preamble + "\n\n---\n\n" + string(knowledge) + "\n\n---\n\n" + t.skillsIndex(skills))
+			return textResult(preamble + "\n\n---\n\n" + string(knowledge) + "\n\n---\n\n" + t.skillsIndex(skills))
 		}
 		sk, ok := skills[name]
 		if !ok {
@@ -180,7 +180,7 @@ func (t agentToolset) guide(skills map[string]agentSkill) mcp.ToolHandlerFor[Gui
 				&SuggestedAction{Tool: t.guideToolName()},
 			)
 		}
-		return textResult(t.Preamble + "\n\n---\n\n" + sk.Body)
+		return textResult(preamble + "\n\n---\n\n" + sk.Body)
 	}
 }
 
@@ -199,9 +199,9 @@ func textResult(s string) (*mcp.CallToolResult, any, error) {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}, nil, nil
 }
 
-func (t agentToolset) skillPrompt(sk agentSkill) mcp.PromptHandler {
+func (t agentToolset) skillPrompt(sk agentSkill, preamble string) mcp.PromptHandler {
 	return func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		text := t.Preamble + "\n\n---\n\n" + sk.Body
+		text := preamble + "\n\n---\n\n" + sk.Body
 		if t.PromptArg != nil {
 			if v := strings.TrimSpace(req.Params.Arguments[t.PromptArg.Name]); v != "" {
 				text = fmt.Sprintf(t.PromptLead, v) + "\n\n" + text
@@ -215,14 +215,16 @@ func (t agentToolset) skillPrompt(sk agentSkill) mcp.PromptHandler {
 }
 
 // register adds the toolset: the service's own tools, <name>_guide, and one
-// prompt per skill.
-func (t agentToolset) register(s *mcp.Server) error {
+// prompt per skill. toolsets says which other services' hand-offs the guide can
+// point at here.
+func (t agentToolset) register(s *mcp.Server, toolsets toolsetSelection) error {
 	skills, err := t.skills()
 	if err != nil {
 		return err
 	}
 
 	t.Register(s)
+	preamble := t.Preamble + handoffNote(t.Name, toolsets)
 
 	notDestructive := false
 	mcp.AddTool(s, &mcp.Tool{
@@ -230,7 +232,7 @@ func (t agentToolset) register(s *mcp.Server) error {
 		Title:       t.GuideTitle,
 		Description: t.GuideDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &notDestructive, IdempotentHint: true},
-	}, t.guide(skills))
+	}, t.guide(skills, preamble))
 
 	for _, n := range sortedSkillNames(skills) {
 		sk := skills[n]
@@ -241,7 +243,7 @@ func (t agentToolset) register(s *mcp.Server) error {
 		if t.PromptArg != nil {
 			p.Arguments = []*mcp.PromptArgument{t.PromptArg}
 		}
-		s.AddPrompt(p, t.skillPrompt(sk))
+		s.AddPrompt(p, t.skillPrompt(sk, preamble))
 	}
 	return nil
 }

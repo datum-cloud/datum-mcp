@@ -207,6 +207,12 @@ func NewProjectHTTPClient(ctx context.Context, project string) (*http.Client, st
 	if project == "" {
 		return nil, "", fmt.Errorf("project is required")
 	}
+	return newPrefixedHTTPClient(ctx, projectControlPlanePrefix(project))
+}
+
+// newPrefixedHTTPClient is NewProjectHTTPClient for any control plane; ""
+// addresses the API root.
+func newPrefixedHTTPClient(_ context.Context, basePrefix string) (*http.Client, string, error) {
 	apiHost, err := authutil.GetAPIHostname()
 	if err != nil {
 		return nil, "", err
@@ -223,7 +229,7 @@ func NewProjectHTTPClient(ctx context.Context, project string) (*http.Client, st
 			// retry-on-429/5xx for free; add it here.
 			retried := &retryRoundTripper{next: rt}
 			authed := &authRoundTripper{next: retried}
-			return &prefixRoundTripper{base: projectControlPlanePrefix(project), next: authed}
+			return &prefixRoundTripper{base: basePrefix, next: authed}
 		},
 	}
 	tr, err := rest.TransportFor(cfg)

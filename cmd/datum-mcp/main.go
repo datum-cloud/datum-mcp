@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/datum-cloud/datum-mcp/internal/authutil"
 	"github.com/datum-cloud/datum-mcp/internal/server"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +22,15 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "datum-mcp",
 		Short: "Datum MCP server",
+		// main reports the error itself, once.
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Flags parsed fine, so usage won't help with anything that
+			// fails from here on.
+			cmd.SilenceUsage = true
+			if err := checkHeadlessConfig(); err != nil {
+				return err
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 			switch mode {
@@ -41,6 +51,17 @@ func newRootCmd() *cobra.Command {
 		"allow http mode to bind a non-loopback host (DANGEROUS: this transport has no authentication or Origin check of its own)")
 
 	return cmd
+}
+
+// checkHeadlessConfig fails startup when DATUM_TOKEN is set but the API
+// hostname can't be found, instead of starting a server whose every tool call
+// would fail the same way.
+func checkHeadlessConfig() error {
+	if os.Getenv("DATUM_TOKEN") == "" {
+		return nil
+	}
+	_, err := authutil.GetAPIHostname()
+	return err
 }
 
 func main() {
