@@ -24,7 +24,7 @@ installation and quick start.
 - `DATUM_CLIENT_ID` (inferred for *.datum.net and *.staging.env.datum.net)
 - `DATUM_TOKEN` (override bearer token; skips login)
 - `DATUM_VERBOSE` (`true` to print verbose auth logs)
-- `DATUM_USER_ID` (override user subject; otherwise from stored credentials)
+- `DATUM_USER_ID` (override user subject; otherwise the `DATUM_TOKEN` user as the API reports it, else stored credentials)
 - `DATUM_ORG` (active organization for project listing)
 - `DATUM_PROJECT` (active project for every project-scoped tool; wins over one saved by `projects set`)
 - `DATUM_MCP_ENABLE_TOOLSETS` (comma-separated allowlist, e.g. `dns`; unset means every toolset; see "Toolsets" below)
@@ -34,9 +34,10 @@ installation and quick start.
 Set **both** `DATUM_TOKEN` and `DATUM_API_HOSTNAME` (e.g. `api.datum.net`). Both are required together — `DATUM_TOKEN`
 alone still needs the API hostname from somewhere, and without stored credentials from a prior interactive login to
 derive it from, startup fails fast with an error telling you to also set `DATUM_API_HOSTNAME` (no browser is ever
-opened on its account). With both env vars set, no keychain access and no browser is ever needed. `DATUM_USER_ID` is
-also required for `organizations` `list`/`set` (which need a user ID to query memberships), since there's no
-stored-credentials subject to fall back on.
+opened on its account). That includes a Linux box with no keyring service at all. With both env vars set, no keychain
+access and no browser is ever needed. `organizations` `list`/`set` need a user ID to query memberships; under
+`DATUM_TOKEN` it's the token's own user, as the API reports it (a `SelfSubjectReview`), so `DATUM_USER_ID` is only needed
+to override that.
 
 ### Running as a service account
 A service account is confined to its own project and can't list organizations or projects, so the usual
@@ -71,7 +72,7 @@ Every `list` action accepts:
 
 ## Tools
 
-- **organizations** — `list` | `get` | `set`. User resolution: `DATUM_USER_ID` env, else subject from stored credentials.
+- **organizations** — `list` | `get` | `set`. User resolution: `DATUM_USER_ID` env, else the `DATUM_TOKEN` user, else subject from stored credentials.
 - **users** — `list`. Org-scoped memberships: `{ "action": "list", "org": "<org-id>" }`.
 - **projects** — `list` | `get` | `set` | `create`. Org resolution: `org` input, else `DATUM_ORG`, else stored active org.
   `list`/`create` need an org; `set` verifies against the org's projects when it can, else by fetching the project

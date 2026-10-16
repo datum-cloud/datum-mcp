@@ -43,7 +43,7 @@ func TestWhoAmIReadsSelfSubjectReview(t *testing.T) {
 			t.Errorf("expected a SelfSubjectReview body, got %s", b)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"kind":"SelfSubjectReview","status":{"userInfo":{"username":"robot@acme-prod.identity.miloapis.com"}}}`)
+		_, _ = io.WriteString(w, `{"kind":"SelfSubjectReview","status":{"userInfo":{"username":"robot@acme-prod.identity.miloapis.com","uid":"12345"}}}`)
 	}))
 	defer srv.Close()
 
@@ -51,8 +51,8 @@ func TestWhoAmIReadsSelfSubjectReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "robot@acme-prod.identity.miloapis.com" {
-		t.Errorf("expected the reviewed username, got %q", got)
+	if got.Username != "robot@acme-prod.identity.miloapis.com" || got.UID != "12345" {
+		t.Errorf("expected the reviewed username and uid, got %+v", got)
 	}
 }
 

@@ -517,7 +517,7 @@ func toolOrganizationMemberships(ctx context.Context, _ *mcp.CallToolRequest, in
 	if a == "get" {
 		return okResult(map[string]string{"organization": activeOrgOrEmpty()})
 	}
-	userID, err := currentUserID()
+	userID, err := currentUserID(ctx)
 	if err != nil {
 		return discoveryErr(ctx, err)
 	}

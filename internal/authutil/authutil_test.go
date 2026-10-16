@@ -53,3 +53,21 @@ func TestGetAPIHostnameWithOnlyTokenGivesActionableError(t *testing.T) {
 		t.Errorf("expected error to mention DATUM_API_HOSTNAME, got %q", err.Error())
 	}
 }
+
+func TestGetAPIHostnameWithOnlyTokenAndNoKeyringGivesActionableError(t *testing.T) {
+	// A headless Linux box usually has no keyring service, so reading stored
+	// credentials fails outright rather than finding no active user; that
+	// still has to point at DATUM_API_HOSTNAME.
+	keyringErr := errors.New(`exec: "dbus-launch": executable file not found in $PATH`)
+	keyring.MockInitWithError(keyringErr)
+	t.Cleanup(keyring.MockInit)
+	t.Setenv("DATUM_API_HOSTNAME", "")
+	t.Setenv("DATUM_TOKEN", "fake-token")
+	_, err := GetAPIHostname()
+	if err == nil || !strings.Contains(err.Error(), "DATUM_API_HOSTNAME") {
+		t.Fatalf("expected an error mentioning DATUM_API_HOSTNAME, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "dbus-launch") {
+		t.Errorf("expected the underlying keyring error to be kept, got %q", err.Error())
+	}
+}

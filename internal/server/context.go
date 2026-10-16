@@ -95,7 +95,7 @@ func toolContext(ctx context.Context, _ *mcp.CallToolRequest, _ ContextInput) (*
 }
 
 func listContextOrgs(ctx context.Context, res *ContextResult) error {
-	userID, err := currentUserID()
+	userID, err := currentUserID(ctx)
 	if err != nil {
 		return err
 	}

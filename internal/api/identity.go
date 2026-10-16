@@ -18,38 +18,48 @@ import (
 // account's username: "<sa>@<project>.identity.miloapis.com".
 const serviceAccountDomainSuffix = ".identity.miloapis.com"
 
-// WhoAmI returns the username the API authenticates this server's token as,
-// via a SelfSubjectReview. It's the API's own answer rather than anything
-// read out of the token, so it's right for any token the API accepts.
-func WhoAmI(ctx context.Context) (string, error) {
+// Identity is who the API authenticates this server's token as.
+type Identity struct {
+	// Username is a person's email, or a service account's
+	// "<sa>@<project>.identity.miloapis.com".
+	Username string
+	// UID is the user ID the user control plane is addressed by.
+	UID string
+}
+
+// WhoAmI returns who the API authenticates this server's token as, via a
+// SelfSubjectReview. It's the API's own answer rather than anything read out
+// of the token, so it's right for any token the API accepts.
+func WhoAmI(ctx context.Context) (Identity, error) {
 	cli, host, err := newPrefixedHTTPClient(ctx, "")
 	if err != nil {
-		return "", err
+		return Identity{}, err
 	}
 	return whoAmI(ctx, cli, host)
 }
 
-func whoAmI(ctx context.Context, cli *http.Client, host string) (string, error) {
+func whoAmI(ctx context.Context, cli *http.Client, host string) (Identity, error) {
 	body := []byte(`{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview"}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+"/apis/authentication.k8s.io/v1/selfsubjectreviews", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return Identity{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	var out struct {
 		Status struct {
 			UserInfo struct {
 				Username string `json:"username"`
+				UID      string `json:"uid"`
 			} `json:"userInfo"`
 		} `json:"status"`
 	}
 	if err := doJSON(cli, req, &out); err != nil {
-		return "", err
+		return Identity{}, err
 	}
 	if out.Status.UserInfo.Username == "" {
-		return "", fmt.Errorf("SelfSubjectReview returned no username")
+		return Identity{}, fmt.Errorf("SelfSubjectReview returned no username")
 	}
-	return out.Status.UserInfo.Username, nil
+	return Identity{Username: out.Status.UserInfo.Username, UID: out.Status.UserInfo.UID}, nil
 }
 
 // ServiceAccountProject returns the project a service account belongs to,

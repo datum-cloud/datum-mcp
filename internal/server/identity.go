@@ -27,37 +27,46 @@ const (
 // whoAmI is api.WhoAmI, swappable in tests.
 var whoAmI = api.WhoAmI
 
-// The last token serviceAccountProject looked up, and its answer. One entry is
+// The last token currentIdentity looked up, and its answer. One entry is
 // enough: a server runs as one identity, and only a keyring login's hourly
 // refresh changes the token.
 var (
-	saProjectMu    sync.Mutex
-	saProjectToken string
-	saProjectName  string
+	identityMu    sync.Mutex
+	identityToken string
+	identityValue api.Identity
 )
+
+// currentIdentity returns who the API authenticates this server's token as.
+// It never starts a login: with no token already available it fails instead.
+func currentIdentity(ctx context.Context) (api.Identity, error) {
+	tok, ok := auth.CheckAuth(ctx)
+	if !ok {
+		return api.Identity{}, fmt.Errorf("not authenticated")
+	}
+	identityMu.Lock()
+	defer identityMu.Unlock()
+	if tok == identityToken {
+		return identityValue, nil
+	}
+	id, err := whoAmI(ctx)
+	if err != nil {
+		// Not cached, so a transient failure doesn't stick.
+		return api.Identity{}, err
+	}
+	identityToken, identityValue = tok, id
+	return id, nil
+}
 
 // serviceAccountProject returns the project this server's token belongs to
 // when the token is a service account's, and "" otherwise. A service account
 // can't list organizations or projects, so without this it could never find
-// the one project it's allowed into. It never starts a login: with no token
-// already available it just returns "".
+// the one project it's allowed into.
 func serviceAccountProject(ctx context.Context) string {
-	tok, ok := auth.CheckAuth(ctx)
-	if !ok {
-		return ""
-	}
-	saProjectMu.Lock()
-	defer saProjectMu.Unlock()
-	if tok == saProjectToken {
-		return saProjectName
-	}
-	user, err := whoAmI(ctx)
+	id, err := currentIdentity(ctx)
 	if err != nil {
-		// Not cached, so a transient failure doesn't stick.
 		return ""
 	}
-	p, _ := api.ServiceAccountProject(user)
-	saProjectToken, saProjectName = tok, p
+	p, _ := api.ServiceAccountProject(id.Username)
 	return p
 }
 
@@ -78,10 +87,23 @@ func activeProjectOrEmpty(ctx context.Context) (name, source string) {
 }
 
 // currentUserID is the user whose organization memberships 'organizations'
-// and 'context' list: DATUM_USER_ID, else the stored login's subject.
-func currentUserID() (string, error) {
+// and 'context' list: DATUM_USER_ID, else, with DATUM_TOKEN set, the token's
+// own user as the API reports it, else the stored login's subject. The stored
+// subject is skipped under DATUM_TOKEN: it may belong to someone other than
+// the token, and on a headless box there's usually no stored login to read.
+func currentUserID(ctx context.Context) (string, error) {
 	if v := os.Getenv("DATUM_USER_ID"); v != "" {
 		return v, nil
+	}
+	if os.Getenv("DATUM_TOKEN") != "" {
+		id, err := currentIdentity(ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to determine user ID for DATUM_TOKEN (set DATUM_USER_ID to skip this lookup): %w", err)
+		}
+		if id.UID == "" {
+			return "", fmt.Errorf("failed to determine user ID: the API reported none for DATUM_TOKEN; set DATUM_USER_ID")
+		}
+		return id.UID, nil
 	}
 	id, err := authutil.GetSubject()
 	if err != nil {

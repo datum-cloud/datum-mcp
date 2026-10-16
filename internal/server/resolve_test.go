@@ -9,6 +9,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/datum-cloud/datum-mcp/internal/api"
+
 	"github.com/datum-cloud/datum-mcp/internal/keyring"
 	"github.com/datum-cloud/datum-mcp/internal/org"
 	"github.com/datum-cloud/datum-mcp/internal/project"
@@ -17,19 +19,22 @@ import (
 func TestMain(m *testing.M) {
 	keyring.MockInit()
 	// Never reach a real API from tests; ones that need an identity stub it.
-	whoAmI = func(context.Context) (string, error) { return "", errors.New("no API in tests") }
+	whoAmI = func(context.Context) (api.Identity, error) { return api.Identity{}, errors.New("no API in tests") }
 	m.Run()
 }
 
-// stubIdentity makes the API report username for any token, and clears the
-// cached lookup so the next call sees it.
+// stubIdentity makes the API report username (with uid "uid-for-tests") for
+// any token, and clears the cached lookup so the next call sees it.
 func stubIdentity(t *testing.T, username string) *int {
 	t.Helper()
 	calls := 0
 	prev := whoAmI
-	whoAmI = func(context.Context) (string, error) { calls++; return username, nil }
-	saProjectToken, saProjectName = "", ""
-	t.Cleanup(func() { whoAmI = prev; saProjectToken, saProjectName = "", "" })
+	whoAmI = func(context.Context) (api.Identity, error) {
+		calls++
+		return api.Identity{Username: username, UID: "uid-for-tests"}, nil
+	}
+	identityToken, identityValue = "", api.Identity{}
+	t.Cleanup(func() { whoAmI = prev; identityToken, identityValue = "", api.Identity{} })
 	return &calls
 }
 
@@ -136,11 +141,11 @@ func TestServiceAccountProjectDoesNotCacheFailures(t *testing.T) {
 	t.Setenv("DATUM_TOKEN", "sa-token")
 	stubIdentity(t, "")
 	fail := true
-	whoAmI = func(context.Context) (string, error) {
+	whoAmI = func(context.Context) (api.Identity, error) {
 		if fail {
-			return "", errors.New("transient")
+			return api.Identity{}, errors.New("transient")
 		}
-		return "robot@acme-prod.identity.miloapis.com", nil
+		return api.Identity{Username: "robot@acme-prod.identity.miloapis.com"}, nil
 	}
 	if got := serviceAccountProject(ctx); got != "" {
 		t.Fatalf("expected no project while the lookup fails, got %q", got)
@@ -160,6 +165,54 @@ func TestServiceAccountProjectNeverLogsIn(t *testing.T) {
 	if *calls != 0 {
 		t.Errorf("expected no identity lookup without a token, got %d", *calls)
 	}
+}
+
+func TestCurrentUserID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("DATUM_USER_ID wins without a lookup", func(t *testing.T) {
+		t.Setenv("DATUM_TOKEN", "user-token")
+		t.Setenv("DATUM_USER_ID", "env-user")
+		calls := stubIdentity(t, "someone@example.com")
+		if got, err := currentUserID(ctx); err != nil || got != "env-user" {
+			t.Fatalf("expected DATUM_USER_ID, got %q err=%v", got, err)
+		}
+		if *calls != 0 {
+			t.Errorf("expected no identity lookup, got %d", *calls)
+		}
+	})
+
+	t.Run("DATUM_TOKEN alone uses the token's own user", func(t *testing.T) {
+		t.Setenv("DATUM_TOKEN", "user-token")
+		t.Setenv("DATUM_USER_ID", "")
+		stubIdentity(t, "someone@example.com")
+		if got, err := currentUserID(ctx); err != nil || got != "uid-for-tests" {
+			t.Fatalf("expected the API-reported uid, got %q err=%v", got, err)
+		}
+	})
+
+	t.Run("a failed lookup names DATUM_USER_ID", func(t *testing.T) {
+		t.Setenv("DATUM_TOKEN", "user-token")
+		t.Setenv("DATUM_USER_ID", "")
+		stubIdentity(t, "")
+		whoAmI = func(context.Context) (api.Identity, error) { return api.Identity{}, errors.New("boom") }
+		_, err := currentUserID(ctx)
+		if err == nil || !strings.Contains(err.Error(), "DATUM_USER_ID") {
+			t.Errorf("expected an error naming DATUM_USER_ID, got %v", err)
+		}
+	})
+
+	t.Run("without DATUM_TOKEN it reads the stored login, never the API", func(t *testing.T) {
+		t.Setenv("DATUM_TOKEN", "")
+		t.Setenv("DATUM_USER_ID", "")
+		calls := stubIdentity(t, "someone@example.com")
+		if _, err := currentUserID(ctx); err == nil {
+			t.Errorf("expected an error with no stored login")
+		}
+		if *calls != 0 {
+			t.Errorf("expected no identity lookup, got %d", *calls)
+		}
+	})
 }
 
 func TestDiscoveryErrBreaksTheListingLoop(t *testing.T) {
