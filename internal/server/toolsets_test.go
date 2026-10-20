@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -344,5 +346,68 @@ func TestDefaultToolListStaysWithinBudget(t *testing.T) {
 	t.Logf("default tools/list: %d tools, %d bytes model-visible (~%dK tokens)", len(tools), visible, visible*10/39/1000)
 	if visible > defaultVisibleBudget {
 		t.Errorf("default model-visible tool list is %d bytes, over the %d budget: %s", visible, defaultVisibleBudget, budgetHint)
+	}
+}
+
+// callErr calls a tool expecting a JSON-RPC error rather than a tool result.
+func callErr(t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any) *jsonrpc.Error {
+	t.Helper()
+	_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
+	var rpcErr *jsonrpc.Error
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("expected a JSON-RPC error calling %s, got %v", tool, err)
+	}
+	return rpcErr
+}
+
+func TestCallingAnUnloadedToolPointsAtItsToolset(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	cs := connect(t)
+
+	for tool, toolset := range map[string]string{
+		"networks":                   "vpc",
+		"compute_guide":              "compute",
+		agentToolNames["compute"][0]: "compute",
+		"resource":                   "resource",
+	} {
+		e := callErr(t, cs, tool, map[string]any{"action": "list"})
+		want := `toolsets {"action":"load","names":["` + toolset + `"]}`
+		if e.Code != jsonrpc.CodeInvalidParams || !strings.Contains(e.Message, want) {
+			t.Errorf("%s: expected -32602 pointing at %s, got %d %q", tool, want, e.Code, e.Message)
+		}
+		var data struct {
+			SuggestedAction SuggestedAction `json:"suggested_action"`
+		}
+		if err := json.Unmarshal(e.Data, &data); err != nil || data.SuggestedAction.Tool != "toolsets" || data.SuggestedAction.Action != "load" {
+			t.Errorf("%s: expected a toolsets load suggested_action in data, got %s", tool, e.Data)
+		}
+	}
+
+	if e := callErr(t, cs, "no_such_tool", nil); e.Message != `unknown tool "no_such_tool"` {
+		t.Errorf("expected the plain SDK error for a tool no toolset provides, got %q", e.Message)
+	}
+}
+
+func TestCallingAToolAfterLoadingItsToolsetReachesIt(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
+	cs := connect(t)
+	callErr(t, cs, "networks", map[string]any{"action": "list"})
+	if text, isErr := guideText(t, cs, "toolsets", map[string]any{"action": "load", "names": []string{"vpc"}}); isErr {
+		t.Fatalf("unexpected error: %s", text)
+	}
+	text, isErr := guideText(t, cs, "networks", map[string]any{"action": "explode"})
+	if !isErr || !strings.Contains(text, "explode") {
+		t.Errorf("expected the networks tool itself to reject the action, got %q", text)
+	}
+}
+
+func TestCallingADisabledToolSaysItCantBeLoaded(t *testing.T) {
+	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
+	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "vpc")
+	e := callErr(t, connect(t), "networks", map[string]any{"action": "list"})
+	if !strings.Contains(e.Message, "DATUM_MCP_DISABLE_TOOLSETS") || strings.Contains(e.Message, `"action":"load"`) || e.Data != nil {
+		t.Errorf("expected a disabled-toolset error with no load suggestion, got %q (data %s)", e.Message, e.Data)
 	}
 }

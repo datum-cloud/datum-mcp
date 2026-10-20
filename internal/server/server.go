@@ -801,6 +801,7 @@ func NewMCPServer() *mcp.Server {
 	}
 	loader.registerTool()
 	registerPrompts(s, loader.isLoaded)
+	s.AddReceivingMiddleware(loader.unknownToolMiddleware)
 
 	return s
 }

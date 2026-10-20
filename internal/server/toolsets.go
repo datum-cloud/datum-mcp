@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"text/tabwriter"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -26,6 +28,9 @@ type toolsetLoader struct {
 
 	mu     sync.Mutex
 	loaded map[string]bool
+
+	ownersOnce sync.Once
+	owners     map[string]string
 }
 
 func newToolsetLoader(s *mcp.Server, sel toolsetSelection) *toolsetLoader {
@@ -80,6 +85,87 @@ func (l *toolsetLoader) load(name string) bool {
 		}
 	}
 	return true
+}
+
+// toolOwners maps every optional tool to the toolset that provides it. Agent
+// toolsets register their tools through their service packages, so the only
+// complete record is what a server lists once each toolset is loaded: it's
+// built on a scratch server, the first time a call misses.
+func toolOwners() (map[string]string, error) {
+	ctx := context.Background()
+	scratch := mcp.NewServer(&mcp.Implementation{Name: "datum-mcp-toolset-index", Version: Version}, nil)
+	l := newToolsetLoader(scratch, toolsetSelection{enable: map[string]bool{}})
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	ss, err := scratch.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer ss.Close()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "datum-mcp-toolset-index", Version: Version}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer cs.Close()
+
+	owners := map[string]string{}
+	for _, name := range knownToolsets() {
+		l.load(name)
+		res, err := cs.ListTools(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range res.Tools {
+			if _, ok := owners[t.Name]; !ok {
+				owners[t.Name] = name
+			}
+		}
+	}
+	return owners, nil
+}
+
+// ownerOf is the toolset that provides tool, or "" if no optional toolset does.
+func (l *toolsetLoader) ownerOf(tool string) string {
+	l.ownersOnce.Do(func() {
+		owners, err := toolOwners()
+		if err != nil {
+			log.Printf("indexing toolsets: %v", err)
+		}
+		l.owners = owners
+	})
+	return l.owners[tool]
+}
+
+// unknownToolMiddleware answers a call to a tool whose toolset isn't loaded
+// with that toolset and the call that loads it. Without it the SDK's bare
+// "unknown tool" leaves an agent that knows the name, from a guide or an
+// earlier session, nothing to try next.
+func (l *toolsetLoader) unknownToolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		call, ok := req.(*mcp.CallToolRequest)
+		if method != "tools/call" || !ok || call.Params == nil {
+			return next(ctx, method, req)
+		}
+		name := call.Params.Name
+		toolset := l.ownerOf(name)
+		if toolset == "" || l.isLoaded(toolset) {
+			return next(ctx, method, req)
+		}
+		if !l.sel.loadable(toolset) {
+			return nil, &jsonrpc.Error{
+				Code: jsonrpc.CodeInvalidParams,
+				Message: fmt.Sprintf("unknown tool %q: it's in the %s toolset, which DATUM_MCP_DISABLE_TOOLSETS turns off on this "+
+					"server, so it can't be loaded from here: tell the user, rather than working around it", name, toolset),
+			}
+		}
+		suggestion := SuggestedAction{Tool: "toolsets", Action: "load", Args: map[string]any{"names": []string{toolset}}}
+		data, _ := json.Marshal(map[string]any{"suggested_action": suggestion})
+		return nil, &jsonrpc.Error{
+			Code: jsonrpc.CodeInvalidParams,
+			Message: fmt.Sprintf("unknown tool %q: it's in the %s toolset, which isn't loaded. Load it with "+
+				"toolsets {\"action\":\"load\",\"names\":[%q]}, then call %s again", name, toolset, toolset, name),
+			Data: data,
+		}
+	}
 }
 
 // unloaded is every toolset that could still be loaded, sorted.
