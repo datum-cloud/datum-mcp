@@ -237,7 +237,7 @@ func RunLoginFlow(ctx context.Context, verbose bool) error {
 			errChan <- errors.New(errMsg)
 			return
 		}
-		http.Redirect(w, r, "https://docs.datum.net", http.StatusFound)
+		http.Redirect(w, r, "https://www.datum.net/docs", http.StatusFound)
 		codeChan <- code
 	})
 	server.Handler = mux
