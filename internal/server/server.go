@@ -365,6 +365,8 @@ var crudResources = []crudResource{
 		Note: "An HTTPProxy is an Application Load Balancer. To read one, use alb_get/alb_diagnose (alb toolset) rather than its raw status: " +
 			"its top-level conditions aggregate over hostnames and name none, and some read the opposite of how they look. " +
 			"Call alb_guide before creating or changing one. " +
+			"To change an existing one, use the alb_ change tools (alb_update, alb_header, alb_hostname, alb_route, alb_origin) rather than updating spec.rules here: " +
+			"an update replaces the whole rules list, so rules you don't resend - Force HTTPS is its own rule - are deleted. " +
 			"To attach a custom hostname, add it to spec.hostnames (see 'get' response's status.hostnameStatuses[].dnsRecords) rather than creating a DNSRecordSet by hand - " +
 			"the Gateway controller auto-manages the correct DNS record for each entry in spec.hostnames, and a manually-created record for the same name will conflict with it and block certificate issuance."},
 	{Tool: "httproutes", Group: "gateway.networking.k8s.io", Kind: "HTTPRoute", Namespace: "default", Toolset: "alb",

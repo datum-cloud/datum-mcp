@@ -152,9 +152,14 @@ func TestCrudInputSchemasCarryOnlyTheirActionsFields(t *testing.T) {
 // wireBudget is the whole tools/list payload, including the agent tools'
 // output schemas and annotations, which Claude clients don't put in context
 // but which come from the service repos and so can grow on a version bump.
+//
+// Raised for networking's five ALB change tools (about 6.3K visible, 22.5K on
+// the wire, most of it each tool's output schema repeating the load balancer
+// view). They replace the model writing httpproxies spec.rules by hand, which
+// dropped Force HTTPS and misplaced a Host override on a live load balancer.
 const (
-	visibleBudget = 96_000 // bytes; ~3.9 bytes/token
-	wireBudget    = 142_000
+	visibleBudget = 100_000 // bytes; ~3.9 bytes/token
+	wireBudget    = 162_000
 )
 
 func TestToolListStaysWithinBudget(t *testing.T) {
@@ -328,8 +333,10 @@ func TestEnableAllLoadsEverything(t *testing.T) {
 }
 
 // defaultVisibleBudget is the model-visible tool list with the default
-// toolsets: what a fresh client pays before its first call.
-const defaultVisibleBudget = 48_000
+// toolsets: what a fresh client pays before its first call. Raised with
+// visibleBudget for the ALB change tools, which have to load wherever
+// httpproxies does or the model goes back to writing its rules by hand.
+const defaultVisibleBudget = 53_000
 
 func TestDefaultToolListStaysWithinBudget(t *testing.T) {
 	t.Setenv("DATUM_MCP_ENABLE_TOOLSETS", "")
