@@ -12,13 +12,15 @@ import (
 
 // The alb toolset (DATUM_MCP_DISABLE_TOOLSETS=alb, which also gates the
 // httpproxies/httproutes/gateways/trafficprotectionpolicies tools) mounts
-// networking's own read-only Application Load Balancer tools - alb_list,
-// alb_get, alb_diagnose, alb_reason_explain, alb_traffic_summary - straight from
+// networking's own Application Load Balancer tools straight from
 // network-services-operator, plus the knowledge and skills written to go with
-// them. Nothing about how a load balancer is read lives in this repo: the
-// diagnosis walk, the reason catalog and the product decoding are the same
-// code the in-cluster assistant and `datumctl alb` run, so the three can't
-// describe one load balancer differently.
+// them: alb_list, alb_get, alb_diagnose, alb_reason_explain and
+// alb_traffic_summary read; alb_update, alb_header, alb_hostname, alb_route and
+// alb_origin change one. Nothing about how a load balancer is read or changed
+// lives in this repo: the diagnosis walk, the reason catalog, the product
+// decoding and the edits are the same code the in-cluster assistant and
+// `datumctl alb` run, so the three can't describe or write one load balancer
+// differently.
 //
 // See agentToolset for what this server adds on top.
 
@@ -33,12 +35,20 @@ const albGuideToolDescription = "Read networking's own guidance for Application 
 // own still says "plan" and "apply".
 const albPreamble = `These documents are networking's own, written for Datum's in-product assistant. In this MCP server:
 
-- The alb_* tools read the ACTIVE PROJECT (see 'projects' action=set) and take no project argument. Use them to read
+- The alb_* tools act on the ACTIVE PROJECT (see 'projects' action=set) and take no project argument. Use them to read
   load balancers - never reason from raw httpproxies status yourself when alb_diagnose can walk it.
-- "Validate" / "plan" a change = make the write call (httpproxies, trafficprotectionpolicies, domains, resource, ...)
-  with dryRun: true, then tell the user in their own words exactly what it will do.
-- "Apply" = repeat that identical call without dryRun, only after the user has said yes. There is no plan token here,
-  so nothing enforces that the body is unchanged: do not change it between the dry run and the real call.
+- Change an existing load balancer with alb_update, alb_header, alb_hostname, alb_route or alb_origin, never by
+  updating httpproxies spec.rules yourself. An update replaces the whole rules list, so hand-written rules drop
+  whatever they don't repeat (Force HTTPS is its own rule) and can put a Host override where the console can't edit
+  it. Call the alb_ change tool with dryRun: true, tell the user in their own words what it will do, and only after
+  they say yes call it again with dryRun: false and the confirm value the dry run returned. It refuses if anything
+  moved in between; preview again.
+- For anything those tools don't cover (creating or deleting a load balancer, traffic protection), "validate" /
+  "plan" = make the write call (httpproxies, trafficprotectionpolicies, domains, resource, ...) with dryRun: true,
+  then tell the user in their own words exactly what it will do.
+- "Apply" = repeat that identical call without dryRun, only after the user has said yes. There is no plan token for
+  those calls, so nothing enforces that the body is unchanged: do not change it between the dry run and the real
+  call.
 - resources_list / schema_get = the dedicated list tools, and 'apis' action=get with detail=structure.
 - Network services: a load balancer never creates one. The 'networkservices' tool can, but only as its own step the
   user explicitly agreed to - never implicitly to make a route work.
@@ -63,8 +73,12 @@ var albToolset = agentToolset{
 	Register:   func(s *mcp.Server) { albagent.RegisterTools(s, albDeps) },
 }
 
-// albDeps resolves what one alb_* call reads through: this server's own login,
-// pointed at the active project.
+// albFieldManager names this server's load balancer changes in managedFields,
+// matching what its other writes record.
+const albFieldManager = "datum-mcp"
+
+// albDeps resolves what one alb_* call reads and writes through: this server's
+// own login, pointed at the active project.
 func albDeps(ctx context.Context) (albagent.ToolDeps, error) {
 	p, err := activeProject(ctx)
 	if err != nil {
@@ -84,6 +98,7 @@ func albDeps(ctx context.Context) (albagent.ToolDeps, error) {
 	}
 	return albagent.ToolDeps{
 		Reader:    albagent.NewClientReader(cli),
+		Writer:    albagent.NewClientWriter(cli, albFieldManager),
 		Namespace: albagent.Namespace,
 		Logs:      albagent.NewClientLogReader(cfg),
 	}, nil

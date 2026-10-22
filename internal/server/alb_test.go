@@ -51,20 +51,38 @@ func listedPrompts(t *testing.T, cs *mcp.ClientSession) map[string]*mcp.Prompt {
 	return out
 }
 
-var albToolNames = []string{"alb_list", "alb_get", "alb_diagnose", "alb_reason_explain", "alb_traffic_summary", albToolset.guideToolName()}
+var (
+	albReadToolNames   = []string{"alb_list", "alb_get", "alb_diagnose", "alb_reason_explain", "alb_traffic_summary", albToolset.guideToolName()}
+	albChangeToolNames = []string{"alb_update", "alb_header", "alb_hostname", "alb_route", "alb_origin"}
+	albToolNames       = append(append([]string{}, albReadToolNames...), albChangeToolNames...)
+)
 
 func TestALBToolsRegistered(t *testing.T) {
 	t.Setenv("DATUM_MCP_DISABLE_TOOLSETS", "")
 	tools := listedTools(t, connect(t))
-	for _, name := range albToolNames {
+	for _, name := range albReadToolNames {
 		tool, ok := tools[name]
 		if !ok {
 			t.Errorf("expected tool %q to be registered", name)
 			continue
 		}
-		// networking publishes no mutating tool, and neither does alb_guide.
 		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 			t.Errorf("expected %q to be annotated read-only", name)
+		}
+	}
+	// The change tools write, so a client must ask before running one; each
+	// previews with dryRun and writes only with the confirm value it returned.
+	for _, name := range albChangeToolNames {
+		tool, ok := tools[name]
+		if !ok {
+			t.Errorf("expected tool %q to be registered", name)
+			continue
+		}
+		if tool.Annotations == nil || tool.Annotations.ReadOnlyHint {
+			t.Errorf("expected %q not to be annotated read-only", name)
+		}
+		if !strings.Contains(tool.Description, "dryRun true first") {
+			t.Errorf("expected %q to tell the model to preview before writing", name)
 		}
 	}
 }
