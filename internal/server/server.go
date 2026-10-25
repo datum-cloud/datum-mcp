@@ -260,6 +260,15 @@ func (r crudResource) register(s *mcp.Server) {
 }
 
 func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	action := Action(strings.ToLower(strings.TrimSpace(string(in.Action))))
+	// A single check covers both "this resource doesn't support that action"
+	// and "that's not a recognized action at all": allowedActions() only
+	// ever contains the five known Action values, so an unrecognized string
+	// like "bogus" fails the same way a disallowed-but-valid action does.
+	// It runs before auth so a bad action never starts a browser login.
+	if !r.allows(action) {
+		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
+	}
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return errResult(err, nil)
 	}
@@ -270,14 +279,6 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 	cli, err := api.NewProjectControlPlaneClient(ctx, p)
 	if err != nil {
 		return errResult(err, nil)
-	}
-	action := Action(strings.ToLower(strings.TrimSpace(string(in.Action))))
-	// A single check covers both "this resource doesn't support that action"
-	// and "that's not a recognized action at all": allowedActions() only
-	// ever contains the five known Action values, so an unrecognized string
-	// like "bogus" fails the same way a disallowed-but-valid action does.
-	if !r.allows(action) {
-		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
 	writeOpts := api.WriteOptions{DryRun: in.DryRun, ExpectedResourceVersion: in.ResourceVersion}
 	switch action {
