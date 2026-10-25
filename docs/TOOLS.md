@@ -108,12 +108,12 @@ Every `list` action accepts:
   namespaced). `iam.miloapis.com`/`billing.miloapis.com`/`services.miloapis.com` stay `list`/`get` only here too —
   this is never a wider door than the dedicated tool. Disable via `DATUM_MCP_DISABLE_TOOLSETS=resource`.
 
-### Application Load Balancers (toolset `alb`) — read-only
+### Application Load Balancers (toolset `alb`)
 An Application Load Balancer is an `HTTPProxy` plus what's attached to it (hostnames and their domains, origins,
 traffic protection, basic auth). These tools are networking's own, mounted from
 [network-services-operator](https://github.com/datum-cloud/network-services-operator) (`pkg/albagent`): the same
-diagnosis, reason catalog and product decoding the in-product assistant and `datumctl alb` use. Every one reads the
-**active project** and takes no `project` argument.
+diagnosis, reason catalog, product decoding and edits the in-product assistant and `datumctl alb` use. Every one acts
+on the **active project** and takes no `project` argument.
 - `alb_guide` — call with no `skill` first: how a load balancer is put together, how to read its status without
   getting it wrong, and the skill list. Then `skill: "<name>"` loads one procedure (`alb-create`, `alb-not-serving`,
   `hostname-not-working`, `certificate-not-issued`, `dns-delegation`, `domain-verification`, `backend-not-reachable`,
@@ -129,9 +129,20 @@ diagnosis, reason catalog and product decoding the in-product assistant and `dat
 - `alb_traffic_summary` — requests that actually arrived, from access logs. Needs observability access in the project;
   reports "unavailable" rather than failing without it. No traffic is not a fault.
 
-Changes still go through the write tools (`httpproxies`, `trafficprotectionpolicies`, `domains`, `resource` for
-`SecurityPolicy`/`BackendTrafficPolicy`). Basic-auth passwords never go through this server: use
-`datumctl alb auth set <name> --user <user> --password-stdin`.
+Changing an existing load balancer goes through networking's change tools, each the same edit as its `datumctl alb`
+command, so a Host override lands on the route and rules a change doesn't touch (Force HTTPS among them) survive:
+- `alb_update` — display name, Force HTTPS, load balancing algorithm, passive health checks.
+- `alb_header` — `set` | `add` | `unset` a request header sent to origins, including the `Host` override.
+- `alb_hostname` — `add` | `remove` a custom hostname; adding one checks its domain is verified.
+- `alb_route` — `add` | `update` | `remove` a route and its origins.
+- `alb_origin` — `add` | `update` (weight) | `remove` one origin on a route.
+
+Each takes two calls: `dryRun: true` validates the change and returns the result plus a `confirm` value; the real call
+needs that value and refuses if the load balancer or the arguments changed since.
+
+Creating or deleting a load balancer and traffic protection still go through the write tools (`httpproxies`,
+`trafficprotectionpolicies`, `domains`, `resource` for `SecurityPolicy`/`BackendTrafficPolicy`). Basic-auth passwords
+never go through this server: use `datumctl alb auth set <name> --user <user> --password-stdin`.
 
 ### IPAM (toolset `ipam`)
 Mirrors `datumctl ipam`'s class/pool/claim/allocation grouping.

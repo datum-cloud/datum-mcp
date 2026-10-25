@@ -260,6 +260,15 @@ func (r crudResource) register(s *mcp.Server) {
 }
 
 func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in RoutedInput) (*mcp.CallToolResult, any, error) {
+	action := Action(strings.ToLower(strings.TrimSpace(string(in.Action))))
+	// A single check covers both "this resource doesn't support that action"
+	// and "that's not a recognized action at all": allowedActions() only
+	// ever contains the five known Action values, so an unrecognized string
+	// like "bogus" fails the same way a disallowed-but-valid action does.
+	// It runs before auth so a bad action never starts a browser login.
+	if !r.allows(action) {
+		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
+	}
 	if _, err := auth.EnsureAuth(ctx); err != nil {
 		return errResult(err, nil)
 	}
@@ -270,14 +279,6 @@ func (r crudResource) handler(ctx context.Context, _ *mcp.CallToolRequest, in Ro
 	cli, err := api.NewProjectControlPlaneClient(ctx, p)
 	if err != nil {
 		return errResult(err, nil)
-	}
-	action := Action(strings.ToLower(strings.TrimSpace(string(in.Action))))
-	// A single check covers both "this resource doesn't support that action"
-	// and "that's not a recognized action at all": allowedActions() only
-	// ever contains the five known Action values, so an unrecognized string
-	// like "bogus" fails the same way a disallowed-but-valid action does.
-	if !r.allows(action) {
-		return errResult(fmt.Errorf("unsupported %s action: %s", r.Tool, in.Action), r.suggestValidAction())
 	}
 	writeOpts := api.WriteOptions{DryRun: in.DryRun, ExpectedResourceVersion: in.ResourceVersion}
 	switch action {
@@ -365,6 +366,8 @@ var crudResources = []crudResource{
 		Note: "An HTTPProxy is an Application Load Balancer. To read one, use alb_get/alb_diagnose (alb toolset) rather than its raw status: " +
 			"its top-level conditions aggregate over hostnames and name none, and some read the opposite of how they look. " +
 			"Call alb_guide before creating or changing one. " +
+			"To change an existing one, use the alb_ change tools (alb_update, alb_header, alb_hostname, alb_route, alb_origin) rather than updating spec.rules here: " +
+			"an update replaces the whole rules list, so rules you don't resend - Force HTTPS is its own rule - are deleted. " +
 			"To attach a custom hostname, add it to spec.hostnames (see 'get' response's status.hostnameStatuses[].dnsRecords) rather than creating a DNSRecordSet by hand - " +
 			"the Gateway controller auto-manages the correct DNS record for each entry in spec.hostnames, and a manually-created record for the same name will conflict with it and block certificate issuance."},
 	{Tool: "httproutes", Group: "gateway.networking.k8s.io", Kind: "HTTPRoute", Namespace: "default", Toolset: "alb",
