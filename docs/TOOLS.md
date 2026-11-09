@@ -105,8 +105,11 @@ Every `list` action accepts:
 - **resource** (generic escape hatch) — `list` | `get` | `create` | `update` | `delete` for any kind without a
   dedicated tool, under `*.datumapis.com`/`*.miloapis.com` or the Gateway API groups (everything else, e.g. core
   Kubernetes machinery, RBAC, is refused). Adds `group`, `kind` (required), `namespace` (required if the kind is
-  namespaced). `iam.miloapis.com`/`billing.miloapis.com`/`services.miloapis.com` stay `list`/`get` only here too —
-  this is never a wider door than the dedicated tool. Disable via `DATUM_MCP_DISABLE_TOOLSETS=resource`.
+  namespaced). A kind that does have a dedicated tool stays reachable, but never wider than that tool: the cap comes
+  from the dedicated registration, so `ipclasses` and `dnszoneclasses` stay `list`/`get`, `ipallocations` keeps
+  `delete` but not `create`/`update`, and `projects` keeps `list`/`get`/`create`. `iam.miloapis.com`/
+  `billing.miloapis.com`/`services.miloapis.com` stay `list`/`get` only here too — this is never a wider door than
+  the dedicated tool, whether or not the dedicated toolset is loaded. Disable via `DATUM_MCP_DISABLE_TOOLSETS=resource`.
 
 ### Application Load Balancers (toolset `alb`)
 An Application Load Balancer is an `HTTPProxy` plus what's attached to it (hostnames and their domains, origins,
