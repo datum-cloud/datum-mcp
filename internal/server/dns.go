@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	dnsagentdocs "go.miloapis.com/dns-operator/docs/agent"
-	"go.miloapis.com/dns-operator/pkg/dnsagent"
+	dnsagentdocs "go.miloapis.com/dns/docs/agent"
+	"go.miloapis.com/dns/pkg/dnsagent"
 
 	"github.com/datum-cloud/datum-mcp/internal/api"
 )
