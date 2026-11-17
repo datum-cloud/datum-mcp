@@ -188,7 +188,7 @@ Compute's own read-only agent tools, mounted from [compute](https://github.com/d
   built from inputs. Neither writes: create it with `workloads` (`dryRun: true` first).
 
 ### DNS (toolset `dns`) — read-only
-DNS's own tools, mounted from [dns-operator](https://github.com/datum-cloud/dns-operator) (`pkg/dnsagent`) and reading
+DNS's own tools, mounted from [dns-operator](https://github.com/datum-cloud/dns) (`pkg/dnsagent`) and reading
 the **active project**. Disabling `dns` also removes the `dnszones`/`dnsrecordsets`/`dnszoneclasses` tools.
 - `dns_guide` — call with no `skill` first: the DNS model, how to read conditions and record ownership, and the skill
   list (`record-create`, `zone-not-resolving`, `record-not-programmed`, `conflicting-record`, `record-not-owner`,
