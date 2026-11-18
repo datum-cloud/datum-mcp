@@ -9,7 +9,7 @@ import (
 	"go.datum.net/compute/pkg/computeagent"
 	"go.datum.net/network-services-operator/pkg/networkagent"
 	"go.miloapis.com/activity/pkg/mcp/httpserver"
-	"go.miloapis.com/dns-operator/pkg/dnsagent"
+	"go.miloapis.com/dns/pkg/dnsagent"
 )
 
 // agentToolNames is every tool each service's agent registers, as that service
