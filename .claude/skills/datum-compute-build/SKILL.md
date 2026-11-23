@@ -7,7 +7,7 @@ description: Use datumctl compute build (not raw kraft) to build and publish a c
 
 Datum Compute Workloads (general-purpose or unikernel runtime class) run
 images in Datum's own format, not a plain OCI container image pulled as-is.
-A unikernel-class image in particular carries `os: kraftcloud` in its
+A unikernel-class image in particular carries `os: datum` in its
 manifest platform and will fail to pull under the `general-purpose` runtime
 class (and vice versa isn't guaranteed either) — building the right format
 for the target runtime class matters.
@@ -41,7 +41,7 @@ for it or a Kraftfile is already present and in play. Reasons:
 - `datumctl compute build` is Datum's own supported path: it takes the same
   Dockerfile and build context as a normal container build, converts it into
   whichever Compute-compatible format the target needs (including the
-  `kraftcloud`-platform unikernel image), and pushes straight to the registry
+  `datum`-platform unikernel image), and pushes straight to the registry
   ref you give it — no separate cloud account, no Kraftfile required for the
   common case.
 - Advanced users who already have a Kraftfile can still pass it with
